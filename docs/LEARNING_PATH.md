@@ -1,6 +1,6 @@
-# AgentForge AI P1 源码学习路径
+# AgentForge AI P2 源码学习路径
 
-下面的相对路径均位于 `D:\AIProjects\AgentForge-AI`。先理解一次真实健康请求如何走完前后端，再学习配置、持久化、安全及测试。P1 没有 Agent 执行，避免把目录预留误认为功能已经完成。
+下面路径均位于 `D:\AIProjects\AgentForge-AI`。先理解 P1 健康请求，再跟随 P2 的任务事务、独立 Worker、LangGraph 和 SSE。模型是明确 Mock，框架和持久化真实运行。
 
 ## 1 从运行入口开始
 
@@ -50,4 +50,18 @@ scripts/bootstrap_local.py 只生成开发服务秘密，拒绝覆盖；scripts/
 
 先掌握 Python async/await、FastAPI 依赖注入、Pydantic v2、SQLAlchemy 事务、Alembic、React hooks 与 TypeScript，再阅读 P0 中 LangGraph、检查点、outbox、租约和审批设计。backend/app/services/scheduling.py 只有 `SchedulerPort` 协议，尚无实现。
 
-P2 需要用户另行批准，再实现异步协作、持久化任务、上下文、SSE、取消和额度；不要在学习过程中自行接通未获授权的模型、MCP 或不可信代码执行。
+P2 已实现，继续按下列顺序阅读；不要自行接通真实模型、MCP 或不可信代码执行，P3 另需批准。
+
+## 8 跟随 P2 任务
+
+先看 schemas/tasks.py 的 TaskCreate，理解固定 Mock、期限和限额；再看 services/tasks.py 的 TaskService.create：指纹、幂等锁、任务和 outbox 同事务。domain/tasks.py 映射实际表，迁移 0002/0003 管理结构。
+
+阅读 workers/engine.py：publish 发布未投递的 outbox，claim 原子领取租约和 fencing，tick 消费 Streams，sweep 处理 deadline、取消、失效租约与丢失通知。进程入口 workers/main.py 关闭外部追踪并运行异步循环。
+
+随后读 orchestration/graph.py 的 build_graph 和 validate_plan。无依赖用两个并行分支和汇聚；有依赖用串行边；Reviewer 反馈通过 increment 回到调度，但 Runtime.begin_round 和业务额度限制循环。审批节点 interrupt 不执行副作用，客户端恢复值仅是唤醒，授权来自数据库。
+
+orchestration/runtime.py 的 operation 用稳定 role/round/attempt 标识去重；_attempt 在任务和租户日额度行锁内预留，完成后结算。services/usage.py 管共享 UTC 窗口；跨午夜用 reservation_day。Mock 单位是 JSON UTF-8 字节，不能当成真实 tokenizer。
+
+orchestration/checkpoints.py 的 PostgresTaskSaver 实现 LangGraph 异步保存和 pending writes。理解业务账本与检查点的不同用途：检查点帮助恢复位置，账本防止重复计量。写入前检查 owner/fence，旧进程不可覆盖新进程。
+
+最后读 api/v1/tasks.py 的 SSE、frontend/src/api/tasks.ts 的游标与重连、pages/Tasks.tsx 和 Approvals.tsx 的真实 UI 操作。LocalAuth.tsx 只在内存保留本地 Token。tests/integration/test_workflows.py 验证真实数据库/Redis、接管、预算竞争和回放；scripts/p2-recovery-probe.py 验证真实进程重启。

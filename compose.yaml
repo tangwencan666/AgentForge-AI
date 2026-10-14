@@ -73,6 +73,24 @@ services:
       interval: 10s
       timeout: 3s
       retries: 12
+  worker:
+    profiles: [app]
+    build: ./backend
+    container_name: agentforge-p2-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.main"]
+    environment:
+      AGENTFORGE_ENVIRONMENT: development
+      AGENTFORGE_DATABASE_URL: postgresql+asyncpg://agentforge:${APP_DB_PASSWORD}@postgres:5432/agentforge
+      AGENTFORGE_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      AGENTFORGE_ADMIN_TOKEN: ${AGENTFORGE_ADMIN_TOKEN:?Run project bootstrap}
+      AGENTFORGE_TENANT_ID: ${AGENTFORGE_TENANT_ID}
+      LANGCHAIN_TRACING_V2: "false"
+      LANGSMITH_TRACING: "false"
+    networks: [data]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
 networks:
   data:
     name: agentforge-p1-data

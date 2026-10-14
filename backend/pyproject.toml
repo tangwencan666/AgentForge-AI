@@ -5,12 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentforge-backend"
 version = "0.1.0"
-description = "AgentForge AI P1 foundations; no model or agent execution"
+description = "AgentForge AI durable workflows with explicitly Mock models"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1", "pydantic>=2.10,<3", "pydantic-settings>=2.7,<3",
   "uvicorn>=0.34,<1", "sqlalchemy>=2.0.38,<2.1", "alembic>=1.14,<2",
   "asyncpg>=0.30,<1", "redis>=5.2,<8",
+  "langgraph>=1.2.12,<2", "langchain>=1.0,<2",
 ]
 
 [project.optional-dependencies]

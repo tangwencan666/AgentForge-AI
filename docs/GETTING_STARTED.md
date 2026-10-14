@@ -1,6 +1,6 @@
-# AgentForge AI P1 本地启动指南
+# AgentForge AI P2 本地启动指南
 
-本项目目前是可运行的 P1 基础骨架，支持真实健康检查、四模型配置校验与持久化。AI 对话、Agent 调度、模型调用、Docker Sandbox、MCP、Skills 执行和审批均尚未实现。
+本项目完成 P1 基础与 P2 持久化协作，支持真实健康检查、四模型配置和显式 Mock 工作流。真实模型调用、Docker Sandbox、MCP/Skills 执行尚未开放；计划确认、取消、预算和 SSE 已实现。
 
 ## 1 环境与隔离
 
@@ -31,7 +31,7 @@ Pop-Location
 ./.venv/Scripts/python.exe scripts/bootstrap_local.py
 ```
 
-脚本生成项目 .env 和 work/redis.conf，随机产生 PostgreSQL 管理密码、应用密码、Redis 密码和本地管理 Token，均不显示值。已存在文件拒绝覆盖。P1 不需要真实模型 API Key。不要将 .env、work 文件、密钥或启动日志提交到 Git。
+脚本生成项目 .env 和 work/redis.conf，随机产生 PostgreSQL 管理密码、应用密码、Redis 密码和本地管理 Token，均不显示值。已存在文件拒绝覆盖。P2 Mock 不需要真实模型 API Key。不要将 .env、work 文件、密钥或启动日志提交到 Git。
 
 默认端口：后端 18100、前端 15173、PostgreSQL 15432、Redis 16379。若冲突，启动前修改 .env 的 BACKEND_PORT、FRONTEND_PORT、POSTGRES_PORT、REDIS_PORT；变更数据库/Redis 端口时，同时更新 AGENTFORGE_DATABASE_URL、AGENTFORGE_REDIS_URL 中的端口。不要打印完整 .env 或不带 --quiet 的 Compose 展开配置。
 
@@ -46,7 +46,7 @@ docker compose up -d --wait postgres redis
 ./.venv/Scripts/python.exe scripts/migrate.py current
 ```
 
-Alembic 创建 model_slots 表，给服务端配置的本地租户创建四个停用槽位。应用连接使用 NOSUPERUSER/NOCREATEDB/NOCREATEROLE 的 agentforge 用户，管理密码与应用密码独立。Redis 配置 AOF 持久化与认证，不初始化其他项目数据。
+Alembic 保留 model_slots 并创建任务、检查点、事件、审批、调用和日额度表，当前 0003_tenant_limits。应用连接使用非超级用户 agentforge，管理密码与应用密码独立。Redis 配置 AOF 与认证，不初始化其他项目数据。
 
 Docker 不可用时记录阻塞，不能宣称真实依赖已连通。不以 SQLite、fakeredis 或 Mock 代替 PostgreSQL/Redis 的验收。
 
@@ -56,7 +56,7 @@ Docker 不可用时记录阻塞，不能宣称真实依赖已连通。不以 SQL
 ./scripts/start-local.ps1
 ```
 
-启动脚本在后台隐藏窗口运行，只管理本项目进程；端口被其他项目使用时拒绝启动。进程信息保存到 work/dev-pids.json。也可在两个终端分别运行：
+启动脚本在后台隐藏窗口运行 API、Vite 和独立 Worker，只管理本项目进程；端口冲突时拒绝启动。进程信息保存到 work/dev-pids.json。也可在三个终端分别运行：
 
 ```powershell
 # 终端一，在项目根目录
@@ -66,6 +66,11 @@ Docker 不可用时记录阻塞，不能宣称真实依赖已连通。不以 SQL
 ```powershell
 # 终端二，在项目 frontend 目录
 npm run dev
+```
+
+```powershell
+# 终端三，在项目根目录
+./.venv/Scripts/python.exe -m app.workers.main
 ```
 
 访问：前端 http://127.0.0.1:15173，后端 http://127.0.0.1:18100，OpenAPI 文档 http://127.0.0.1:18100/docs。GET /health/live 只证明 API 活着；GET /health/ready 验证 PostgreSQL、Alembic 版本/核心表和 Redis PING。未就绪返回 HTTP 503，不返回密码、主机连接串或异常值。
@@ -78,14 +83,13 @@ GET /api/v1/model-slots、POST /api/v1/model-slots/validate、PUT /api/v1/model-
 
 role 为 planner/coder/researcher/reviewer。PUT 为完整配置替换并携带 expected_version；并发修改版本冲突返回 409。配置字段为 provider、base_url、model、credential_reference、temperature、max_tokens、timeout、enabled。原始 api_key 等额外字段一律拒绝且不回显。
 
-credential_reference 只接受 `env:AGENTFORGE_MODEL_...` 的服务端引用；P1 没有秘密写入 API，也没有解密或模型调用。启用真实配置时校验引用是否存在；base_url 必须为批准域名的 HTTPS 地址，不带用户密码、query、fragment 或非 443 端口。provider=mock 仅表示显式配置类型，不生成任何模拟答案。
+credential_reference 只接受 `env:AGENTFORGE_MODEL_...` 引用，仍无秘密写入或真实模型调用。启用真实配置时校验引用；base_url 必须为批准 HTTPS 域名，无用户名密码/query/fragment/非 443 端口。工作流 Mock 快照独立，不覆盖这些配置。
 
 ## 6 自动化验证
 
 ```powershell
 ./.venv/Scripts/python.exe -m pytest -c backend/pyproject.toml tests/unit tests/http -q
-$env:AGENTFORGE_RUN_INTEGRATION = '1'
-./.venv/Scripts/python.exe -m pytest -c backend/pyproject.toml tests/integration -q
+./scripts/test-p2.ps1
 ./.venv/Scripts/python.exe scripts/migrate.py check
 Push-Location frontend
 npm run typecheck
@@ -122,3 +126,15 @@ docker compose --profile app up -d --wait
 frontend 通过 Nginx 同源代理访问 backend；容器 app 服务连接项目数据库与 Redis。应用镜像不是 Docker Sandbox，也不能用于执行用户代码。退出使用 `docker compose --profile app stop`，仍保留数据。
 
 首次创建数据库卷才执行 init-app-role.sql；以后修改应用密码时不能只编辑 .env 期待自动改数据库用户密码，必须单独设计批准的密码轮换操作。
+
+## 9 使用 P2 工作流
+
+进入前端 /tasks，读取本机项目 .env 中的 AGENTFORGE_ADMIN_TOKEN 到密码输入框；不要将其发到聊天或日志。Token 只在页面内存，刷新后清除，生产登录尚未实现。
+
+提交目标时必须明确 Mock。默认计划需人工确认；无依赖 Worker 并发，选择依赖模式则按顺序执行。点击批准计划后查看状态、SSE 轨迹和模拟用量；批准计划不授予沙箱或高风险工具权限。真实模型支出为零，显示的 Mock 费用不是供应商账单。
+
+API 新增 POST /api/v1/tasks（HTTP 202，UUID Idempotency-Key），GET /tasks、GET /tasks/{id}、POST /tasks/{id}/cancel、GET /approvals、POST /approvals/{id}/decision、GET /tasks/{id}/events。均需要 Bearer Token，不通过 URL 传凭据。SSE 支持 Last-Event-ID，断线不取消任务。
+
+test-p2.ps1 暂停本项目后台 Worker，运行真实 Python 集成，再恢复 Worker，避免测试与演示任务竞争；不要同时运行 Docker Worker。E2E 要求本地 Worker 正常，测试启动器把浏览器临时目录放在项目 work 下。要验证 OS 重启可运行 scripts/p2-recovery-probe.py；它只重启本项目 Worker。
+
+默认每任务 15 分钟、8 轮、32 次尝试、100000 模拟 Token、1 模拟 USD；UTC 租户日限额为 1000000 模拟 Token、10 模拟 USD，可由服务器环境参数 DAILY_MOCK_TOKEN_LIMIT/DAILY_MOCK_BUDGET_USD（加 AGENTFORGE_ 前缀）收紧或管理。Agent 不能提高上限。

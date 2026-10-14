@@ -36,4 +36,14 @@ foreach ($taskEntry in $taskEntries) {
     $taskRecords += @{ name = $taskEntry.name; pid = $taskProcessId; port = $taskEntry.port }
     Write-Output "$($taskEntry.name): http://127.0.0.1:$($taskEntry.port)"
 }
+$taskExistingWorker = Get-CimInstance Win32_Process -Filter "CommandLine like '%app.workers.main%'" | Where-Object { Test-AgentForgeProcess $_ 'worker' $taskRoot } | Select-Object -First 1
+if (-not $taskExistingWorker) {
+    $taskWorkerLauncher = Start-Process -FilePath (Join-Path $taskRoot '.venv/Scripts/python.exe') -ArgumentList @('-m','app.workers.main') -WorkingDirectory $taskRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $taskWork 'worker.log') -RedirectStandardError (Join-Path $taskWork 'worker.error.log')
+    Start-Sleep -Seconds 1
+    $taskExistingWorker = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($taskWorkerLauncher.Id)" | Where-Object { Test-AgentForgeProcess $_ 'worker' $taskRoot } | Select-Object -First 1
+    if (-not $taskExistingWorker) { $taskExistingWorker = Get-CimInstance Win32_Process -Filter "ProcessId=$($taskWorkerLauncher.Id)" | Where-Object { Test-AgentForgeProcess $_ 'worker' $taskRoot } | Select-Object -First 1 }
+    if (-not $taskExistingWorker) { throw 'P2 worker did not start; check project dependencies and work logs' }
+}
+$taskRecords += @{ name = 'worker'; pid = $taskExistingWorker.ProcessId; port = $null }
+Write-Output 'worker: independent P2 process (Mock models only)'
 $taskRecords | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $taskWork 'dev-pids.json') -Encoding utf8

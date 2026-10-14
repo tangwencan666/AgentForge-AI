@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from decimal import Decimal
 from urllib.parse import urlsplit
 import ipaddress
 
@@ -20,6 +21,8 @@ class Settings(BaseSettings):
     admin_token: SecretStr = Field(repr=False, min_length=32)
     tenant_id: str = "00000000-0000-4000-8000-000000000001"
     dependency_timeout: float = Field(default=2, gt=0, le=10)
+    daily_mock_token_limit: int = Field(default=1000000, ge=1)
+    daily_mock_budget_usd: Decimal = Field(default=Decimal("10"), gt=0, allow_inf_nan=False)
     allowed_model_hosts: str = "api.openai.com,api.anthropic.com,generativelanguage.googleapis.com"
 
     @field_validator("environment")
@@ -56,7 +59,7 @@ class Settings(BaseSettings):
         if self.environment == "production":
             if not self.redis_url.get_secret_value().startswith("rediss://"):
                 raise ValueError("production Redis requires TLS")
-            raise ValueError("P1 deployment supports development/test only; production is not released")
+            raise ValueError("Only development/test deployment is supported; production is not released")
         return self
 
     @property

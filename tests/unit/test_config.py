@@ -61,6 +61,16 @@ def test_settings_do_not_expose_secret_values(settings):
         assert value not in settings.model_dump_json()
 
 
+def test_secret_cannot_be_stored_in_a_public_model_field(settings,monkeypatch):
+    import secrets
+    secret=secrets.token_hex(32)
+    monkeypatch.setenv('AGENTFORGE_MODEL_TEST',secret)
+    config=ModelConfig(provider='openai_compatible',model=secret)
+    with pytest.raises(AppError) as error:
+        validate_configuration(config,settings)
+    assert error.value.code=='CONFIGURATION_CONTAINS_SECRET'
+
+
 def test_missing_required_environment_is_error(monkeypatch):
     for key in ["AGENTFORGE_DATABASE_URL", "AGENTFORGE_REDIS_URL", "AGENTFORGE_ADMIN_TOKEN"]:
         monkeypatch.delenv(key, raising=False)

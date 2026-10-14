@@ -29,7 +29,7 @@ async def test_real_postgresql_redis_and_migration(real_settings):
     try:
         assert await connections.readiness() == {'postgresql': 'up', 'redis': 'up'}
         async with connections.engine.connect() as conn:
-            assert await conn.scalar(text('SELECT version_num FROM alembic_version')) == '0001_model_slots'
+            assert await conn.scalar(text('SELECT version_num FROM alembic_version')) == '0003_tenant_limits'
             role = (await conn.execute(text('SELECT rolsuper, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname = current_user'))).one()
             assert role == (False, False, False)
         async with connections.sessions() as session:

@@ -21,7 +21,10 @@ class JsonFormatter(logging.Formatter):
         }
         for key in ALLOWED_FIELDS:
             if key in record.__dict__:
-                payload[key] = record.__dict__[key]
+                value = record.__dict__[key]
+                if key == "method":
+                    value = value if value in {"GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS"} else "OTHER"
+                payload[key] = value
         return json.dumps(payload, ensure_ascii=False)
 
 

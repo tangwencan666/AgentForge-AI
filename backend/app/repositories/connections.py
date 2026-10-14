@@ -6,7 +6,7 @@ from redis.asyncio import Redis
 from app.core.config import Settings
 
 logger = logging.getLogger("agentforge")
-MIGRATION_REVISION = "0001_model_slots"
+MIGRATION_REVISION = "0003_tenant_limits"
 
 
 class Connections:
@@ -33,6 +33,7 @@ class Connections:
                 return "migration_required"
             # Verify core table exists too, not only a forged revision string.
             await conn.execute(text("SELECT role FROM model_slots LIMIT 1"))
+            await conn.execute(text("SELECT id FROM agent_tasks LIMIT 1"))
             return "up"
 
     async def _redis_status(self) -> str:

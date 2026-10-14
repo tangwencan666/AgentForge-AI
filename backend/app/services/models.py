@@ -5,9 +5,13 @@ from app.core.config import Settings, validate_model_endpoint
 from app.core.errors import AppError
 from app.domain.entities import ModelSlot
 from app.schemas.models import ModelConfig, ModelRole, ModelUpdate
+from app.services.context import redact
 
 
 def validate_configuration(config: ModelConfig, settings: Settings) -> None:
+    serialized = config.model_dump_json(exclude={"expected_version"})
+    if redact(serialized,settings) != serialized:
+        raise AppError("CONFIGURATION_CONTAINS_SECRET", "Use protected references instead of secret values", 422)
     if config.base_url:
         try:
             validate_model_endpoint(config.base_url, settings.model_hosts)

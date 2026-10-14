@@ -25,3 +25,12 @@ def test_structured_log_keeps_only_safe_fields():
     assert data["request_id"] == "unit-request"
     assert data["status"] == 200
     assert "authorization" not in data
+
+
+def test_unknown_http_method_cannot_echo_a_secret_into_logs():
+    secret=secrets.token_hex(32)
+    record=logging.LogRecord('agentforge',logging.INFO,'test',1,'request_completed',(),None)
+    record.method=secret
+    rendered=JsonFormatter().format(record)
+    assert secret not in rendered
+    assert json.loads(rendered)['method']=='OTHER'
