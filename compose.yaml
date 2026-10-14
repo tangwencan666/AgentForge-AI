@@ -48,6 +48,10 @@ services:
       AGENTFORGE_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       AGENTFORGE_ADMIN_TOKEN: ${AGENTFORGE_ADMIN_TOKEN:?Run project bootstrap}
       AGENTFORGE_TENANT_ID: ${AGENTFORGE_TENANT_ID}
+      AGENTFORGE_SANDBOX_IMAGE_ID: ${AGENTFORGE_SANDBOX_IMAGE_ID:-}
+      AGENTFORGE_SANDBOX_RUNNER_TOKEN: ${AGENTFORGE_SANDBOX_RUNNER_TOKEN:-}
+      AGENTFORGE_SANDBOX_APPROVER_TOKEN: ${AGENTFORGE_SANDBOX_APPROVER_TOKEN:-}
+      AGENTFORGE_SANDBOX_RUNNER_URL: http://runner:8000
     ports:
       - "127.0.0.1:${BACKEND_PORT:-18100}:8000"
     networks: [data, app]
@@ -87,10 +91,56 @@ services:
       AGENTFORGE_TENANT_ID: ${AGENTFORGE_TENANT_ID}
       LANGCHAIN_TRACING_V2: "false"
       LANGSMITH_TRACING: "false"
+      AGENTFORGE_SANDBOX_IMAGE_ID: ${AGENTFORGE_SANDBOX_IMAGE_ID:-}
+      AGENTFORGE_SANDBOX_RUNNER_TOKEN: ${AGENTFORGE_SANDBOX_RUNNER_TOKEN:-}
+      AGENTFORGE_SANDBOX_APPROVER_TOKEN: ${AGENTFORGE_SANDBOX_APPROVER_TOKEN:-}
+      AGENTFORGE_SANDBOX_RUNNER_URL: http://runner:8000
     networks: [data]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+  runner: &sandbox_runner
+    profiles: [sandbox]
+    build: ./backend
+    container_name: agentforge-p3-runner
+    command: ["python", "-m", "uvicorn", "app.sandbox.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    user: "0:0"
+    read_only: true
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=16777216"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 384m
+    cpus: 1
+    pids_limit: 128
+    restart: unless-stopped
+    environment: &sandbox_runner_environment
+      AGENTFORGE_DATABASE_URL: postgresql+asyncpg://agentforge:${APP_DB_PASSWORD}@postgres:5432/agentforge
+      AGENTFORGE_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      AGENTFORGE_ADMIN_TOKEN: ${AGENTFORGE_ADMIN_TOKEN:?Run project bootstrap}
+      AGENTFORGE_TENANT_ID: ${AGENTFORGE_TENANT_ID}
+      AGENTFORGE_SANDBOX_IMAGE_ID: ${AGENTFORGE_SANDBOX_IMAGE_ID:-}
+      AGENTFORGE_SANDBOX_RUNNER_TOKEN: ${AGENTFORGE_SANDBOX_RUNNER_TOKEN:-}
+      AGENTFORGE_SANDBOX_APPROVER_TOKEN: ${AGENTFORGE_SANDBOX_APPROVER_TOKEN:-}
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "127.0.0.1:${SANDBOX_RUNNER_PORT:-18120}:8000"
+    networks: [data]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+  runner-unavailable:
+    <<: *sandbox_runner
+    image: agentforge-p1-runner:latest
+    profiles: [sandbox-test]
+    container_name: agentforge-p3-unavailable-runner
+    environment:
+      <<: *sandbox_runner_environment
+      DOCKER_HOST: unix:///nonexistent/agentforge-test.sock
+    volumes: []
+    ports:
+      - "127.0.0.1:18121:8000"
 networks:
   data:
     name: agentforge-p1-data

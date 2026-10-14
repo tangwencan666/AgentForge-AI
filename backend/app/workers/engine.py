@@ -13,6 +13,8 @@ from app.services.orchestration.checkpoints import PostgresTaskSaver
 from app.services.orchestration.graph import build_graph
 from app.core.errors import AppError
 from app.services.usage import tenant_usage
+from app.domain.sandbox import SandboxExecution
+from app.services.sandbox import EXECUTION_TERMINAL, settle_budget
 
 STREAM = "agentforge:p2:tasks"
 GROUP = "agentforge-p2-workers"
@@ -49,6 +51,34 @@ class Worker:
                 expired = task.deadline <= now()
                 stopped = task.status == "cancel_requested"
                 lease_expired = task.owner and task.lease_until and task.lease_until <= now()
+                if not task.is_mock and task.options.get("workflow") == "sandbox":
+                    execution=(await session.scalars(select(SandboxExecution).where(SandboxExecution.task_id==task.id).with_for_update())).one()
+                    if execution.status in EXECUTION_TERMINAL:
+                        task.status = "failed" if execution.status in {"rejected","output_limit"} else execution.status
+                        task.error_code=execution.failure_reason
+                        task.result={"is_mock":False,"summary":"[DOCKER] Execution "+execution.status,"execution_id":str(execution.id)}
+                        task.owner,task.lease_until=None,None
+                        event(session,task,"status",{"status":task.status,"cleanup_status":execution.cleanup_status})
+                        continue
+                    if expired or stopped:
+                        if execution.launch_claimed_at is None:
+                            execution.status=task.status="timed_out" if expired else "cancelled"
+                            execution.failure_reason=task.error_code="TASK_TIMEOUT" if expired else "TASK_CANCELLED"
+                            approval=await session.get(TaskApproval,execution.approval_reference)
+                            if approval.status=="pending": approval.status="expired" if expired else "cancelled"
+                            await settle_budget(session,execution)
+                            task.owner,task.lease_until=None,None
+                            event(session,task,"status",{"status":task.status,"cleanup_status":execution.cleanup_status})
+                        else:
+                            task.status="cancel_requested"  # Runner must confirm whole-container cleanup first.
+                        continue
+                    if lease_expired:
+                        task.owner,task.lease_until=None,None
+                        if task.status!="waiting_approval":
+                            task.status="queued"
+                            session.add(Outbox(id=uuid4(),task_id=task.id))
+                            event(session,task,"recovered",{"status":"queued","execution_id":str(execution.id)})
+                    continue
                 if expired or stopped:
                     task.status = "timed_out" if expired else "cancelled"
                     task.error_code = "TASK_TIMEOUT" if expired else "TASK_CANCELLED"
@@ -102,13 +132,13 @@ class Worker:
             # Project-scoped advisory lock serializes global capacity decisions.
             await session.execute(text("SELECT pg_advisory_xact_lock(472902)"))
             task = await locked_task(session, task_id)
-            if not task.is_mock:
+            if not task.is_mock and task.options.get("workflow") != "sandbox":
                 task.status, task.error_code = "failed", "REAL_MODE_UNAVAILABLE"
                 event(session, task, "status", {"status":task.status,"error_code":task.error_code})
                 return None
             if task.status != "queued" or task.deadline <= now() or (task.owner and task.lease_until and task.lease_until > now()):
                 return None
-            if task.attempts >= 3:
+            if task.attempts >= 3 and task.is_mock:
                 task.status, task.error_code = "failed", "RECOVERY_LIMIT"
                 await self.release_reservations(session, task, await self.reserved(session, task.id))
                 event(session, task, "status", {"status":task.status})
@@ -133,6 +163,25 @@ class Worker:
         async with self.connections.sessions() as session, session.begin():
             task = await locked_task(session, task_id)
             if task.owner != self.owner or task.fence != fence:
+                return
+            if not task.is_mock and task.options.get("workflow")=="sandbox":
+                execution=(await session.scalars(select(SandboxExecution).where(SandboxExecution.task_id==task.id).with_for_update())).one()
+                if execution.status in EXECUTION_TERMINAL:
+                    task.status="failed" if execution.status in {"rejected","output_limit"} else execution.status
+                    task.error_code=execution.failure_reason
+                    task.result={"is_mock":False,"summary":"[DOCKER] Execution "+execution.status,"execution_id":str(execution.id)}
+                elif task.status=="waiting_approval": pass
+                elif (task.deadline<=now() or task.status=="cancel_requested") and execution.launch_claimed_at:
+                    task.status="cancel_requested"
+                elif error and execution.launch_claimed_at is None:
+                    execution.status=task.status="failed"
+                    execution.failure_reason=task.error_code=error
+                    await settle_budget(session,execution)
+                else:
+                    task.status="queued"
+                    session.add(Outbox(id=uuid4(),task_id=task.id))
+                task.owner,task.lease_until=None,None
+                event(session,task,"status",{"status":task.status,"cleanup_status":execution.cleanup_status})
                 return
             if task.deadline <= now():
                 task.status, task.error_code = "timed_out", "TASK_TIMEOUT"
@@ -160,9 +209,16 @@ class Worker:
 
     async def execute(self, task_id, tenant_id, fence, message_id):
         try:
-            runtime = Runtime(self.connections, self.settings, task_id, tenant_id, self.owner, fence)
             saver = PostgresTaskSaver(self.connections, tenant_id, task_id, self.owner, fence)
-            graph = build_graph(runtime, saver)
+            async with self.connections.sessions() as session:
+                task=await session.get(AgentTask,task_id)
+                sandbox=not task.is_mock and task.options.get("workflow")=="sandbox"
+            if sandbox:
+                from app.services.orchestration.sandbox_graph import build_sandbox_graph
+                graph=build_sandbox_graph(self.connections,self.settings,task_id,tenant_id,self.owner,fence,saver)
+            else:
+                runtime = Runtime(self.connections, self.settings, task_id, tenant_id, self.owner, fence)
+                graph = build_graph(runtime, saver)
             config = {"configurable":{"thread_id":str(task_id)},"recursion_limit":100,"callbacks":[]}
             saved = await saver.aget_tuple(config)
             resume = None

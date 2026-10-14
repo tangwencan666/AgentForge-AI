@@ -5,6 +5,7 @@ from sqlalchemy import pool
 from app.core.config import get_settings
 from app.domain.entities import Base
 import app.domain.tasks  # P2 metadata
+import app.domain.sandbox  # P3 metadata
 
 target_metadata = Base.metadata
 

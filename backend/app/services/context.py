@@ -14,7 +14,8 @@ def content_hash(value) -> str:
 
 def redact(text: str, settings: Settings) -> str:
     connection_passwords = [unquote(urlsplit(url.get_secret_value()).password or "") for url in (settings.database_url, settings.redis_url)]
-    for secret in [settings.admin_token.get_secret_value(), settings.database_url.get_secret_value(), settings.redis_url.get_secret_value()] + connection_passwords + [
+    sandbox_secrets = [v.get_secret_value() for v in (settings.sandbox_runner_token,settings.sandbox_approver_token) if v]
+    for secret in [settings.admin_token.get_secret_value(), settings.database_url.get_secret_value(), settings.redis_url.get_secret_value()] + sandbox_secrets + connection_passwords + [
         value for key, value in os.environ.items() if key.startswith("AGENTFORGE_MODEL_") and value
     ]:
         if secret:
@@ -24,7 +25,12 @@ def redact(text: str, settings: Settings) -> str:
     text = re.sub(r"(?i)(authorization\s*[:=]\s*bearer\s+|api[_-]?key\s*[:=]\s*|password\s*[:=]\s*)([^\s,;]+)", r"\1[REDACTED]", text)
     text = re.sub(r"\bsk-[A-Za-z0-9_-]{12,}\b", "[REDACTED]", text)
     # URL credentials must not enter checkpoints or SSE.
-    text = re.sub(r"([a-z][a-z0-9+.-]*://)[^/\s@]+@", r"\1[REDACTED]@", text, flags=re.I)
+    # A bounded scheme and a single authority match avoid quadratic backtracking
+    # on output floods. Split userinfo after matching instead of searching for @.
+    def clean_authority(match):
+        scheme, authority = match.groups()
+        return scheme + ("[REDACTED]@" + authority.rsplit("@",1)[1] if "@" in authority else authority)
+    text = re.sub(r"([a-z][a-z0-9+.-]{0,31}://)([^/\s]+)", clean_authority, text, flags=re.I)
     return text
 
 

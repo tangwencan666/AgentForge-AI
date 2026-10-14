@@ -1,6 +1,6 @@
-# AgentForge AI P2 源码学习路径
+# AgentForge AI P3 源码学习路径
 
-下面路径均位于 `D:\AIProjects\AgentForge-AI`。先理解 P1 健康请求，再跟随 P2 的任务事务、独立 Worker、LangGraph 和 SSE。模型是明确 Mock，框架和持久化真实运行。
+下面路径均位于 `D:\AIProjects\AgentForge-AI`。先理解 P1 健康请求，再跟随 P2 的任务事务、独立 Worker、LangGraph 和 SSE，最后阅读已授权 P3 的可信 Runner 与受限容器。模型回答保持明确 Mock；沙箱 Python 为真实 Docker 执行，其实际验收状态以 P3_REPORT 为准。
 
 ## 1 从运行入口开始
 
@@ -30,7 +30,7 @@ backend/app/domain/entities.py 的 `Base` 与 `ModelSlot` 定义 ORM。复合主
 
 阅读 backend/migrations/env.py：它把异步数据库连接转入 Alembic 的同步迁移上下文。再阅读 migrations/versions/0001_model_slots.py：创建核心表并填入四个停用槽位。scripts/migrate.py 提供 upgrade/check/current 安全命令；迁移不应在每个 HTTP 请求中执行。
 
-deploy/init-app-role.sql 定义本地应用非超级用户；compose.yaml 定义专属卷、服务健康检查和回环端口。数据库和 Redis 的独立开发容器不是沙箱，后续 P3 需要完全不同的权限和执行边界。
+deploy/init-app-role.sql 定义本地应用非超级用户；compose.yaml 定义专属卷、服务健康检查和回环端口。数据库和 Redis 的独立开发容器不是沙箱；P3 使用独立 Runner 和完全不同的执行容器权限边界。
 
 ## 5 阅读安全边界
 
@@ -48,9 +48,9 @@ scripts/bootstrap_local.py 只生成开发服务秘密，拒绝覆盖；scripts/
 
 ## 7 下一步学习顺序
 
-先掌握 Python async/await、FastAPI 依赖注入、Pydantic v2、SQLAlchemy 事务、Alembic、React hooks 与 TypeScript，再阅读 P0 中 LangGraph、检查点、outbox、租约和审批设计。backend/app/services/scheduling.py 只有 `SchedulerPort` 协议，尚无实现。
+先掌握 Python async/await、FastAPI 依赖注入、Pydantic v2、SQLAlchemy 事务、Alembic、React hooks 与 TypeScript，再阅读 P0 中 LangGraph、检查点、outbox、租约和审批设计。backend/app/services/scheduling.py 仍是 `SchedulerPort` 协议；实际 PostgreSQL Outbox + Redis Streams 调度在 P2 Worker 中，不应因该端口文件没有实现就认为没有任务队列。
 
-P2 已实现，继续按下列顺序阅读；不要自行接通真实模型、MCP 或不可信代码执行，P3 另需批准。
+P2 已实现，继续按下列顺序阅读；P3 已获开发授权，但所有不可信代码都必须通过受限服务端审批与 Docker 执行。不要在 Windows 宿主机直接运行代码，也不要自行接通真实模型、MCP、Skills 或进入 P4。
 
 ## 8 跟随 P2 任务
 
@@ -65,3 +65,30 @@ orchestration/runtime.py 的 operation 用稳定 role/round/attempt 标识去重
 orchestration/checkpoints.py 的 PostgresTaskSaver 实现 LangGraph 异步保存和 pending writes。理解业务账本与检查点的不同用途：检查点帮助恢复位置，账本防止重复计量。写入前检查 owner/fence，旧进程不可覆盖新进程。
 
 最后读 api/v1/tasks.py 的 SSE、frontend/src/api/tasks.ts 的游标与重连、pages/Tasks.tsx 和 Approvals.tsx 的真实 UI 操作。LocalAuth.tsx 只在内存保留本地 Token。tests/integration/test_workflows.py 验证真实数据库/Redis、接管、预算竞争和回放；scripts/p2-recovery-probe.py 验证真实进程重启。
+
+## 9 按一次 P3 执行读源码
+
+先阅读 docs/SANDBOX_EXECUTION_PROTOCOL.md 与 SANDBOX_SECURITY.md，再按下面顺序追踪“提交 → 独立审批 → 真实 Docker → 清理 → 结果”。源码的创建配置不是隔离证明，最后必须对照真实测试证据。
+
+1. `backend/app/schemas/sandbox.py`：`ResourceLimits` 限制 CPU/内存/PIDs，`SandboxCreate` 限制代码与超时且禁止额外字段；`SandboxExecutionRequest` 补充服务端执行身份，`RunnerDispatch` 只传任务/执行 ID、owner、fence。区别公共 API 载荷与可信内部派发。
+2. `backend/app/domain/sandbox.py` 与 `backend/migrations/versions/0004_sandbox_sandbox.py`：`SandboxExecution` 保存源代码、哈希、审批、启动意图、Runner 租约、结果和清理状态；`SandboxDailyUsage` 保存资源预留。代码是受控业务输入，不默认写应用日志，普通结果 DTO 不返回代码。
+3. `backend/app/api/v1/sandbox.py`：管理员负责提交、查看、取消，`require_approver()` 只允许独立审批者读取 `/source` 和决定。前端按钮不是权限边界；源代码读取必须服务端授权，Token 不进 URL。
+4. `backend/app/services/sandbox.py`：`SandboxService.create()` 核对代码大小/秘密、按租户锁定幂等键、预留 CPU 秒、关联任务/审批/outbox；`decide()` 核对操作哈希、期限和图检查点，批准后排队、拒绝不执行；`cancel()` 保存取消并让 Runner 清理。跟随 `execution_dto()` 理解安全返回字段。
+5. `backend/app/services/orchestration/sandbox_graph.py`：`build_sandbox_graph()` 的 approval 节点用 LangGraph interrupt 持久化等待，执行节点通过内部 Token 派发并查询原结果；恢复值仅唤醒，不授予权限。该图不调用四个模型。
+6. `backend/app/workers/engine.py`：`execute()` 依据受控 workflow 分流 P2 Mock 图与 P3 沙箱图，继续使用 PostgreSQL 检查点、outbox、Redis Streams、租约与 fence。Worker 重启不代表容器必须重新启动；任务租约与 Runner 租约用途不同。
+7. `backend/app/sandbox/policy.py`：`operation_digest()` 将代码哈希、镜像 ID、超时、资源和 policy_version 绑定审批；`validate_execution()` 重新验证数据库记录、独立批准和资源预留；`create_options()` 生成固定 Docker 配置；`verify_container()` 与 `verify_attestation()` 分别校验 daemon 创建结果和代码注入前的容器内状态。
+8. `sandbox-image/Dockerfile` 与 `sandbox-image/launcher.py`：固定基础镜像与非 root 身份，`attest()` 输出 UID、seccomp、capabilities、cgroup 与网络接口；`main()` 等待有界输入、写容器 tmpfs，再启动 `python -I -S` 子进程和独立超时 alarm。不要在 Windows 宿主机运行此 launcher 来执行待审代码。
+9. `backend/app/sandbox/driver.py`：`DockerDriver.health()` 只查询固定已批准镜像，不自动 pull；`run()` 创建、inspect、握手、单次代码注入、限制输出、采样资源、超时终止；`remove()` kill/remove 后再查询确认不存在。查看 finally 路径，不以正常退出代替清理。
+10. `backend/app/sandbox/engine.py`：`SandboxRunner.dispatch()` 在 Docker 前提交启动意图，数据库锁控制跨进程并发；`_authorize_boundary()` 在启动和代码注入前重复权限检查；`_monitor()` 观察 deadline 与取消；`_finish()` 脱敏摘要和结算；`reconcile()` 只清理确定归属的本项目容器，未知结果进入 needs_reconciliation，不能重跑。
+11. `backend/app/sandbox/main.py` 与 `compose.yaml`：独立控制面 API、内部 Token、loopback 端口和 daemon Socket。可信 Runner 有高权限；实际执行容器无 Socket。Runner 不能作为模型工具或公共 API 暴露。
+12. `frontend/src/api/sandbox.ts`、`frontend/src/pages/Sandbox.tsx`：复用管理员内存授权，独立审批者 Token 只用于 source/decision；源代码哈希核对、状态轮询、关联任务 SSE、真实输出和清理。对比 Tasks.tsx 的显式 Mock 标签，不混淆真实代码执行和真实模型推理。
+
+## 10 用测试验证安全边界
+
+先读 `tests/http/test_sandbox_api.py`、`tests/unit/test_sandbox_runner_policy.py` 和 `tests/unit/test_sandbox_runner_http.py`，理解额外参数、镜像、缺权限、审批变化、运行时报告不匹配、Docker 故障和不确定创建必须怎样拒绝。客户端或连接安全替身只是契约/故障测试，不能作为真实 Docker 运行证据。
+
+再读 `tests/integration/test_sandbox.py`：真实 PostgreSQL/Redis、独立 Runner 和 Docker，使用有界代码验证正常输出、无网络、非 root、只读根、专用宿主标记不可读、CPU/内存/PIDs 限额、超时取消、输出上限、跨任务无状态泄露、重复消息和 Worker 恢复。测试使用本项目无敏感标记，不读取真实凭证或进行破坏性攻击。
+
+`scripts/test-p3.ps1` 负责测试时暂停本项目后台 Worker并恢复，显式启用真实集成与沙箱 opt-in。`frontend/tests/sandbox.spec.ts` 使用真实后端批准/拒绝流程；AGENTFORGE_RUN_SANDBOX 未置 1 时会 skip，skip 不是验收通过。测试不写密码到 trace；最终数量及实际运行证据见 P3_REPORT。
+
+完成测试后学习 `reconcile()` 的 ownership、标签、固定命名与租约检查：只可清理自己的容器，不能使用 Docker 全局 prune。默认预热关闭，运行过不可信代码的容器不回池；Docker 不可用没有宿主机执行回退。Docker Desktop 的 Linux VM 结果不能证明 Windows/VM 逃逸、生产身份或 AppArmor/SELinux 全部安全，相关残余风险需保留。

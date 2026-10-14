@@ -23,7 +23,7 @@ def now():
 def event(session, task: AgentTask, kind: str, payload: dict):
     task.event_seq += 1
     task.version += 1
-    session.add(TaskEvent(task_id=task.id, seq=task.event_seq, kind=kind, payload={**payload, "is_mock": True}))
+    session.add(TaskEvent(task_id=task.id, seq=task.event_seq, kind=kind, payload={**payload, "is_mock": task.is_mock}))
 
 
 async def locked_task(session, task_id: UUID, tenant_id: str | None = None):
@@ -48,7 +48,7 @@ def check_lease(task: AgentTask, owner: str, fence: int, *, allow_waiting=False,
 
 def task_dto(task: AgentTask):
     return {"task_id": str(task.id), "goal": task.goal, "status": task.status, "is_mock": task.is_mock,
-            "execution_mode": "mock", "created_at": task.created_at.isoformat(), "deadline": task.deadline.isoformat(),
+            "execution_mode": "mock" if task.is_mock else "sandbox", "created_at": task.created_at.isoformat(), "deadline": task.deadline.isoformat(),
             "version": task.version, "iterations": task.iterations, "error_code": task.error_code,
             "options": task.options, "model_snapshot": task.model_snapshot, "plan_hash": task.plan_hash,
             "result": task.result, "usage": {"input_output_tokens": task.tokens_used, "reserved_tokens": task.tokens_reserved,
@@ -108,10 +108,15 @@ class TaskService:
 
     async def list(self, tenant_id: str):
         async with self.connections.sessions() as session:
-            tasks = (await session.scalars(select(AgentTask).where(AgentTask.tenant_id == UUID(tenant_id)).order_by(AgentTask.created_at.desc()).limit(100))).all()
+            tasks = (await session.scalars(select(AgentTask).where(AgentTask.tenant_id == UUID(tenant_id), AgentTask.is_mock.is_(True)).order_by(AgentTask.created_at.desc()).limit(100))).all()
             return [task_dto(task) for task in tasks]
 
     async def cancel(self, task_id: UUID, tenant_id: str):
+        current = await self.get(task_id,tenant_id)
+        if current["execution_mode"] == "sandbox":
+            from app.services.sandbox import SandboxService
+            await SandboxService(self.connections,self.settings).cancel(UUID(current["options"]["execution_id"]),tenant_id)
+            return await self.get(task_id,tenant_id)
         async with self.connections.sessions() as session, session.begin():
             task = await locked_task(session, task_id, tenant_id)
             if task.status not in TERMINAL and task.status != "cancel_requested":
@@ -134,7 +139,7 @@ class TaskService:
 
     async def approvals(self, tenant_id: str):
         async with self.connections.sessions() as session:
-            rows = (await session.scalars(select(TaskApproval).where(TaskApproval.tenant_id == UUID(tenant_id)).order_by(TaskApproval.expires_at.desc()).limit(100))).all()
+            rows = (await session.scalars(select(TaskApproval).where(TaskApproval.tenant_id == UUID(tenant_id),TaskApproval.policy_version == "p2-plan-v1").order_by(TaskApproval.expires_at.desc()).limit(100))).all()
             return [{"approval_id":str(r.id),"task_id":str(r.task_id),"operation_hash":r.operation_hash,"policy_version":r.policy_version,
                 "status":r.status,"expires_at":r.expires_at.isoformat(),"is_mock":True,"type":"plan_confirmation"} for r in rows]
 

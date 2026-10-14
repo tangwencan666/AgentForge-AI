@@ -6,7 +6,7 @@ from redis.asyncio import Redis
 from app.core.config import Settings
 
 logger = logging.getLogger("agentforge")
-MIGRATION_REVISION = "0003_tenant_limits"
+MIGRATION_REVISION = "0004_sandbox"
 
 
 class Connections:

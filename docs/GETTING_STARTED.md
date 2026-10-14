@@ -1,6 +1,6 @@
-# AgentForge AI P2 本地启动指南
+# AgentForge AI P3 本地启动指南
 
-本项目完成 P1 基础与 P2 持久化协作，支持真实健康检查、四模型配置和显式 Mock 工作流。真实模型调用、Docker Sandbox、MCP/Skills 执行尚未开放；计划确认、取消、预算和 SSE 已实现。
+2026 年 10 月 15 日，Asia/Shanghai。P3 已完成实际验收，现暂停等待 P4 授权。本项目保留 P1 基础与 P2 持久化协作，P3 增加独立可信 Runner、固定镜像 Docker Python 执行与 Sandbox Center。模型回答与费用仍为显式 Mock；真实模型 API、MCP/Skills 均未开放。本文说明启动和验收方法，完整证据见 P3_REPORT。
 
 ## 1 环境与隔离
 
@@ -15,7 +15,7 @@ Set-Location D:\AIProjects\AgentForge-AI
 New-Item -ItemType Directory -Path work/tmp,work/pip-cache,work/npm-cache -Force | Out-Null
 $env:TEMP = (Resolve-Path work/tmp).Path
 $env:TMP = $env:TEMP
-python -m venv .venv
+if (-not (Test-Path .venv/Scripts/python.exe)) { python -m venv .venv }
 ./.venv/Scripts/python.exe -m pip install --cache-dir work/pip-cache -r backend/requirements.lock
 ./.venv/Scripts/python.exe -m pip install --cache-dir work/pip-cache --no-deps -e ./backend
 Push-Location frontend
@@ -23,7 +23,7 @@ npm ci --ignore-scripts --cache ../work/npm-cache
 Pop-Location
 ```
 
-如果 .venv 已存在，直接复用，不覆盖已有环境。依赖下载需要网络；安装器临时文件及缓存放在项目 work 下。
+如果 .venv 已存在，直接复用，不覆盖已有环境。P3 Docker SDK 及已批准依赖按 backend/requirements.lock 安装到同一项目 .venv，不全局安装。依赖下载需要网络；安装器临时文件及缓存放在项目 work 下。
 
 ## 2 生成本地配置
 
@@ -46,7 +46,9 @@ docker compose up -d --wait postgres redis
 ./.venv/Scripts/python.exe scripts/migrate.py current
 ```
 
-Alembic 保留 model_slots 并创建任务、检查点、事件、审批、调用和日额度表，当前 0003_tenant_limits。应用连接使用非超级用户 agentforge，管理密码与应用密码独立。Redis 配置 AOF 与认证，不初始化其他项目数据。
+Alembic 保留 P1/P2 表；P3 的 0004_sandbox 在 0003_tenant_limits 之上增加 sandbox_executions 和 sandbox_daily_usage。用 current/check 确认本项目当前迁移，不能仅改文档宣称升级成功。应用连接使用非超级用户 agentforge，管理密码与应用密码独立。Redis 配置 AOF 与认证，不初始化其他项目数据。
+
+从 P2 升级时，已有健康 PostgreSQL/Redis 容器及卷应继续复用，不重建、清空或轮换其配置。先检查 `docker compose ps`，如果已运行，不必再次启动数据服务；只对本项目执行迁移。后续 Runner 使用 `--no-deps` 启动，避免修改现有数据容器。
 
 Docker 不可用时记录阻塞，不能宣称真实依赖已连通。不以 SQLite、fakeredis 或 Mock 代替 PostgreSQL/Redis 的验收。
 
@@ -56,7 +58,7 @@ Docker 不可用时记录阻塞，不能宣称真实依赖已连通。不以 SQL
 ./scripts/start-local.ps1
 ```
 
-启动脚本在后台隐藏窗口运行 API、Vite 和独立 Worker，只管理本项目进程；端口冲突时拒绝启动。进程信息保存到 work/dev-pids.json。也可在三个终端分别运行：
+启动脚本在后台隐藏窗口运行 API、Vite 和独立 Worker，只管理本项目进程；端口冲突时拒绝启动。进程信息保存到 work/dev-pids.json。P3 另需第 10 节的独立可信 Runner，因此整体有 API、前端、Worker、Runner 四个组件。也可在三个终端分别运行本地应用部分：
 
 ```powershell
 # 终端一，在项目根目录
@@ -79,7 +81,7 @@ Dashboard 通过 Vite 同源代理调用真实 /health/ready，每 15 秒刷新�
 
 ## 5 模型配置接口
 
-GET /api/v1/model-slots、POST /api/v1/model-slots/validate、PUT /api/v1/model-slots/{role} 使用本地管理 Bearer Token。Token 从受保护的 .env 读取，不写 URL 或浏览器缓存。本轮不提供浏览器登录表单。
+GET /api/v1/model-slots、POST /api/v1/model-slots/validate、PUT /api/v1/model-slots/{role} 使用本地管理 Bearer Token。Token 从受保护的 .env 读取，不写 URL 或浏览器缓存。任务、计划审批和沙箱页面提供仅内存的本地开发授权输入，不是生产登录。
 
 role 为 planner/coder/researcher/reviewer。PUT 为完整配置替换并携带 expected_version；并发修改版本冲突返回 409。配置字段为 provider、base_url、model、credential_reference、temperature、max_tokens、timeout、enabled。原始 api_key 等额外字段一律拒绝且不回显。
 
@@ -89,16 +91,18 @@ credential_reference 只接受 `env:AGENTFORGE_MODEL_...` 引用，仍无秘密�
 
 ```powershell
 ./.venv/Scripts/python.exe -m pytest -c backend/pyproject.toml tests/unit tests/http -q
-./scripts/test-p2.ps1
+./scripts/test-p3.ps1
 ./.venv/Scripts/python.exe scripts/migrate.py check
 Push-Location frontend
 npm run typecheck
 npm run build
-npm run test:e2e
+# 完整浏览器验证使用第 10 节的沙箱 opt-in 命令
 Pop-Location
 ```
 
-集成测试只对项目服务运行；包含真实连接、权限、四槽位及版本持久化验证，会恢复测试前的配置参数但保留递增版本。浏览器真实联调测试要求前后端和数据库/Redis已运行。浏览器测试使用机器上已安装的 Edge；没有 Edge 时需批准使用其他已有浏览器或在项目内下载测试浏览器。
+先按第 10 节复用已登记镜像并启动 Runner，再执行 test-p3.ps1。它暂停本项目后台 Worker，设置真实集成与沙箱 opt-in，自动启动仅本项目的无 Socket `runner-unavailable` 故障服务，运行 Python 测试，finally 只清理该故障服务并恢复 Worker。不要并行运行该脚本或另一个 Docker Worker。真实测试留下本项目审计记录，并创建后销毁本项目执行容器，不操作其他项目数据。未满足条件时须如实记录失败或 skip，不能将 skip 计为 Docker 验收通过。
+
+浏览器真实联调测试要求前后端、Worker、数据库/Redis 和 Runner 已运行；第 10 节给出明确启用沙箱 E2E 的命令。浏览器测试使用机器上已安装的 Edge；没有 Edge 时需批准使用其他已有浏览器或在项目内下载测试浏览器。
 
 HTTP 单元测试的 StubConnections 是显式测试替身，不代表真实连通。浏览器故障测试通过拦截请求验证“无法连接”展示，它与真实健康联调测试分别报告。
 
@@ -108,10 +112,12 @@ HTTP 单元测试的 StubConnections 是显式测试替身，不代表真实连�
 
 ```powershell
 ./scripts/stop-local.ps1
-docker compose stop postgres redis
+docker compose --profile sandbox stop runner
 ```
 
-终端前台运行方式可在各自终端 Ctrl+C 停止。stop-local.ps1 核对可执行文件/命令所属项目后才停止记录中的 PID，防止 PID 重用误杀其他程序。docker compose stop 保留容器和卷；docker compose down 只移除本项目服务/网络并保留卷。不要加 -v，除非明确授权删除本项目持久数据。
+终端前台运行方式可在各自终端 Ctrl+C 停止。stop-local.ps1 核对可执行文件/命令所属项目后才停止记录中的 PID，防止 PID 重用误杀其他程序。Runner 正常退出会终止自己管理的活动执行并确认清理；异常退出后的不确定记录仍需核对，不能把服务停止当成清理已完成。
+
+以上停止方式保留 PostgreSQL/Redis 和所有卷。若确实需要停止本项目数据服务，单独执行 `docker compose stop postgres redis`；不停止其他项目。不要执行全局 `docker prune`、`docker system prune`、`docker volume prune` 或 `docker compose down -v`。
 
 ## 8 可选全 Compose 启动
 
@@ -120,10 +126,10 @@ docker compose stop postgres redis
 ```powershell
 docker compose --profile app build
 docker compose --profile app run --rm --no-deps backend python -m alembic upgrade head
-docker compose --profile app up -d --wait
+docker compose --profile app --profile sandbox up -d --wait --no-deps backend frontend worker runner
 ```
 
-frontend 通过 Nginx 同源代理访问 backend；容器 app 服务连接项目数据库与 Redis。应用镜像不是 Docker Sandbox，也不能用于执行用户代码。退出使用 `docker compose --profile app stop`，仍保留数据。
+前提是第 10 节已登记批准镜像，项目 PostgreSQL/Redis 健康且迁移完成。frontend 通过 Nginx 同源代理访问 backend；容器 app 服务连接项目数据库与 Redis。API/Worker 应用镜像不是代码执行镜像；只有独立 Runner 创建受限执行容器。退出用 `docker compose --profile app --profile sandbox stop backend frontend worker runner`，保留数据服务与卷。
 
 首次创建数据库卷才执行 init-app-role.sql；以后修改应用密码时不能只编辑 .env 期待自动改数据库用户密码，必须单独设计批准的密码轮换操作。
 
@@ -138,3 +144,90 @@ API 新增 POST /api/v1/tasks（HTTP 202，UUID Idempotency-Key），GET /tasks�
 test-p2.ps1 暂停本项目后台 Worker，运行真实 Python 集成，再恢复 Worker，避免测试与演示任务竞争；不要同时运行 Docker Worker。E2E 要求本地 Worker 正常，测试启动器把浏览器临时目录放在项目 work 下。要验证 OS 重启可运行 scripts/p2-recovery-probe.py；它只重启本项目 Worker。
 
 默认每任务 15 分钟、8 轮、32 次尝试、100000 模拟 Token、1 模拟 USD；UTC 租户日限额为 1000000 模拟 Token、10 模拟 USD，可由服务器环境参数 DAILY_MOCK_TOKEN_LIMIT/DAILY_MOCK_BUDGET_USD（加 AGENTFORGE_ 前缀）收紧或管理。Agent 不能提高上限。
+
+## 10 启动 P3 沙箱控制面
+
+前提：现有 Docker Engine 可用、项目依赖安装已批准且完成、P2 数据服务健康。不能修改 Docker Desktop 全局配置；Docker 不可用时停止实际执行验证并记录阻塞，绝不在 Windows 宿主机直接运行待执行代码。
+
+### 已登记项目的日常启动
+
+当前项目已登记并验收批准镜像、控制凭据和 0004_sandbox 迁移。日常启动直接复用，不重新 build、bootstrap 或覆盖镜像登记；现有服务已健康时无需重复执行：
+
+```powershell
+Set-Location D:\AIProjects\AgentForge-AI
+docker compose config --quiet
+docker compose --profile sandbox up -d --no-deps runner
+./scripts/start-local.ps1
+```
+
+上述命令要求既有项目 PostgreSQL/Redis 已运行，不重建其容器和卷。镜像缺失则执行安全失败，不可擅自换 tag 或登记其他镜像。
+
+### 仅首次配置或获批准的镜像发布
+
+先审阅 `sandbox-image/Dockerfile`、`sandbox-image/launcher.py` 与 `docs/SANDBOX_SECURITY.md`。以下仅用于首次建立新的本项目环境；已有批准镜像不应每次重构或覆写。Dockerfile 固定基础镜像 digest，本地 tag 只用于查找刚构建的产物，Runner 登记和运行不可变镜像 ID：
+
+```powershell
+Set-Location D:\AIProjects\AgentForge-AI
+docker build --tag agentforge-p3-python:local ./sandbox-image
+if ($LASTEXITCODE -ne 0) { throw 'Sandbox image build failed' }
+$sandboxApprovedImageId = docker image inspect agentforge-p3-python:local --format '{{.Id}}'
+if ($LASTEXITCODE -ne 0 -or $sandboxApprovedImageId -notmatch '^sha256:[a-f0-9]{64}$') {
+    throw 'A reviewed immutable sandbox image ID is required'
+}
+./.venv/Scripts/python.exe scripts/bootstrap-sandbox.py --image-id $sandboxApprovedImageId
+if ($LASTEXITCODE -ne 0) { throw 'Sandbox registration failed; do not replace the existing approved image' }
+./.venv/Scripts/python.exe scripts/migrate.py upgrade
+./.venv/Scripts/python.exe scripts/migrate.py check
+docker compose config --quiet
+docker compose --profile sandbox up -d --build --no-deps runner
+if ($LASTEXITCODE -ne 0) { throw 'Trusted Runner startup failed' }
+```
+
+以上 PowerShell 变量只保存公开镜像 ID，不保存或打印凭据。bootstrap-sandbox.py 仅向项目 .env 补充随机 Runner/独立审批者 Token 与批准镜像 ID，不显示值；不同批准镜像已存在时拒绝覆盖，需要另行审查镜像更新及审批失效流程。
+
+如果本地 API/Worker 在 P3 配置登记前已运行，应只重启本项目进程加载新配置：
+
+```powershell
+./scripts/stop-local.ps1
+./scripts/start-local.ps1
+docker compose --profile sandbox ps runner
+```
+
+默认 Runner 为 `http://127.0.0.1:18120`，由 SANDBOX_RUNNER_PORT 配置；端口修改须同步本项目 AGENTFORGE_SANDBOX_RUNNER_URL，不修改系统网络。`/health/live` 只证明进程存活，不证明 Docker/镜像/清理状态就绪。受保护 `/internal/status` 检查 Runner 可用状态；不要将 Runner Token 放入浏览器、聊天、URL 或命令行展示。
+
+Compose Runner 是可信控制面，拥有 Docker Socket 和 daemon 管理权限；它不是不可信执行容器。即使只发布 loopback，也不要将其通过公网、反向代理或模型工具开放。真正的代码容器无 Socket、无宿主机挂载、非 root、只读根、网络 none、受限 cgroup、seccomp/no-new-privileges。清理未确认时 Runner 全局拒绝新任务；未知执行若已确认 removed，可接收新任务，但原执行不重跑。
+
+### 沙箱页面与独立审批
+
+进入 `http://127.0.0.1:15173/sandbox`，使用 .env 中本地管理员 Token 授权，读取真实策略后提交 Python 代码和降低后的资源限额。服务端生成任务/执行/审批 ID；受理 HTTP 202 不等于执行成功。
+
+由独立审批者在沙箱页输入 AGENTFORGE_SANDBOX_APPROVER_TOKEN，点击“读取待审批代码”，核对实际代码、代码哈希、操作哈希、固定策略、超时和资源，再批准或拒绝。管理员 Token 不能代替独立审批。批准后查看真实 Docker 状态、脱敏输出、采样资源及 `cleanup_status=removed`；拒绝时不得创建代码执行容器。
+
+两种 Token 均不进浏览器持久存储。管理员授权保存在应用内存，SPA 页面导航期间保留，刷新或退出授权后清空；独立审批者 Token 与受控源码属于沙箱页面内存，离开沙箱页面或刷新后清空。审批源代码不进入 SSE。不要提交真实模型 API Key 或敏感文件。Model Center 仍只有配置基础；P2 四角色任务的回答/Token/美元费用仍为 Mock，与真实 Docker 资源用量分开。
+
+### 完整测试与清理检查
+
+```powershell
+./scripts/test-p3.ps1
+./.venv/Scripts/python.exe scripts/migrate.py current
+./.venv/Scripts/python.exe scripts/migrate.py check
+Push-Location frontend
+$sandboxPreviousOptIn = $env:AGENTFORGE_RUN_SANDBOX
+try {
+    $env:AGENTFORGE_RUN_SANDBOX = '1'
+    npm run typecheck
+    npm run build
+    npm run test:e2e
+} finally {
+    $env:AGENTFORGE_RUN_SANDBOX = $sandboxPreviousOptIn
+    Pop-Location
+}
+docker ps -a --filter 'label=agentforge.sandbox.execution' --format '{{.Names}} {{.Status}}'
+./.venv/Scripts/python.exe scripts/check_secrets.py
+```
+
+test-p3.ps1 明确启用真实 PostgreSQL/Redis 与 Docker 集成，并自动创建与最终删除自身的专用故障 Runner 服务；不停止共享 daemon 或删除其他容器。浏览器沙箱测试默认 skip，只有 AGENTFORGE_RUN_SANDBOX=1 才执行真实批准/拒绝流程。没有 opt-in 的绿灯不能算作沙箱 E2E 通过。
+
+本轮最终 Python 153/153 通过（单元/HTTP 117，真实集成 36，其中沙箱服务 16）；浏览器 8/8 通过（真实沙箱批准/拒绝 2，原核心 6），0 失败、0 跳过。类型检查、51 modules 构建、迁移与 pip check 通过。真实 OS Worker 重启探针通过；未专门强杀 Runner OS 覆盖全部恢复窗口，不能与受控租约测试混淆。详细证据与限制见 P3_REPORT。
+
+最后一条 Docker 查询使用 execution 标签检查所有策略版本，只查询、不删除容器。本轮结束时已确认无遗留执行容器；未来发现遗留应检查精确名称、执行 ID、租约与清理状态，由受限 Runner 对账。禁止全局批量删除，也不能把未知结果自动重新执行。预热关闭，执行过不可信代码的容器永不回池。P3 完成后停止新增范围，等待 P4 批准。
