@@ -8,9 +8,9 @@ P0、P1 和 P2 已完成，P3 尚未开始。历史报告保留原阶段记录�
 | --- | --- |
 | FastAPI | 模块化 API、统一响应与异常、UUID 请求 ID、安全 JSON 日志、OpenAPI 已实现 |
 | 配置 | 环境变量校验、SecretStr、项目受保护 .env、本地生成秘密、Git 忽略已实现 |
-| PostgreSQL | 项目专属真实容器、非超级用户应用连接、model_slots 持久化、Alembic 0001_model_slots 已验证 |
-| Redis | 项目专属真实容器、认证、AOF、PING 已验证；没有任务队列实现 |
-| React | 十个页面、响应式导航、实际 /health/ready 状态展示已实现；执行页面为明确占位 |
+| PostgreSQL | 项目专属真实容器、非超级用户应用连接、model_slots 与任务核心状态持久化；Alembic 当前版本 0003_tenant_limits 已验证 |
+| Redis | 项目专属真实容器、认证、AOF、PING 已验证；P2 已实现 PostgreSQL Outbox + Redis Streams 异步任务调度 |
+| React | 十个页面、响应式导航、实际 /health/ready 状态展示已实现；任务中心与人工审批页面已经接入真实后端 API |
 | 模型槽位 | 四角色、严格 Schema、管理 Token 保护、端点与凭据引用校验、version 并发修改已实现 |
 | 模型调用 | 仅执行明确 Mock，四角色快照不覆盖 Model Center 配置；真实调用未开放 |
 | Agent/LangGraph/SSE | 真实 LangGraph、PostgreSQL 检查点、独立 Worker、Streams/outbox、租约/fencing、SSE 回放已实现 |
