@@ -1,0 +1,16 @@
+.venv/
+node_modules/
+dist/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+work/
+test-results/
+playwright-report/
+*.log
+.coverage
+.DS_Store

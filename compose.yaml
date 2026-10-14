@@ -1,0 +1,85 @@
+name: agentforge-p1
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    container_name: agentforge-p1-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: agentforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run project bootstrap}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run project bootstrap}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/init-app-role.sql:/docker-entrypoint-initdb.d/10-app-role.sql:ro
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agentforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+  redis:
+    image: redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    container_name: agentforge-p1-redis
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Run project bootstrap}
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
+    volumes:
+      - redis_data:/data
+      - ./work/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+  backend:
+    profiles: [app]
+    build: ./backend
+    container_name: agentforge-p1-backend
+    environment:
+      AGENTFORGE_ENVIRONMENT: development
+      AGENTFORGE_DATABASE_URL: postgresql+asyncpg://agentforge:${APP_DB_PASSWORD}@postgres:5432/agentforge
+      AGENTFORGE_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      AGENTFORGE_ADMIN_TOKEN: ${AGENTFORGE_ADMIN_TOKEN:?Run project bootstrap}
+      AGENTFORGE_TENANT_ID: ${AGENTFORGE_TENANT_ID}
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-18100}:8000"
+    networks: [data, app]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  frontend:
+    profiles: [app]
+    build: ./frontend
+    container_name: agentforge-p1-frontend
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-15173}:8080"
+    networks: [app]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+networks:
+  data:
+    name: agentforge-p1-data
+  app:
+    name: agentforge-p1-app
+volumes:
+  postgres_data:
+    name: agentforge-p1-postgres-data
+  redis_data:
+    name: agentforge-p1-redis-data
