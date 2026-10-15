@@ -1,6 +1,6 @@
-# AgentForge AI P4 源码学习路径
+# AgentForge AI P5 源码学习路径
 
-下面路径均位于 `D:\AIProjects\AgentForge-AI`。先理解 P1 健康请求，再跟随 P2 的任务事务、独立 Worker、LangGraph 和 SSE，再阅读 P3 的可信 Runner 与受限容器，最后跟随已授权 P4 的 MCP Gateway 与 Skill 生命周期。模型回答保持明确 Mock；沙箱 Python 为真实 Docker 执行，其实际验收状态以 P3_REPORT 为准。
+下面路径均位于 `D:\AIProjects\AgentForge-AI`。先理解 P1 健康请求、P2 持久化协作、P3 可信 Runner，再跟随 P4 MCP Gateway 与 Skill 生命周期，最后阅读 P5 模型适配、预算和恢复。默认回答为明确 Mock；真实供应商验收当前 BLOCKED，沙箱 Python 为真实 Docker 执行。实际验收状态见各阶段报告。
 
 ## 1 从运行入口开始
 
@@ -50,7 +50,7 @@ scripts/bootstrap_local.py 只生成开发服务秘密，拒绝覆盖；scripts/
 
 先掌握 Python async/await、FastAPI 依赖注入、Pydantic v2、SQLAlchemy 事务、Alembic、React hooks 与 TypeScript，再阅读 P0 中 LangGraph、检查点、outbox、租约和审批设计。backend/app/services/scheduling.py 仍是 `SchedulerPort` 协议；实际 PostgreSQL Outbox + Redis Streams 调度在 P2 Worker 中，不应因该端口文件没有实现就认为没有任务队列。
 
-P2 已实现，继续按下列顺序阅读；P3 已获开发授权，但所有不可信代码都必须通过受限服务端审批与 Docker 执行。不可信代码不得在 Windows 宿主机执行；MCP/Skills 仅通过本轮已批准的 P4 控制面使用。真实模型和 P5 尚未授权。
+P2 已实现，继续按下列顺序阅读；P3 已获开发授权，但所有不可信代码都必须通过受限服务端审批与 Docker 执行。不可信代码不得在 Windows 宿主机执行；MCP/Skills 仅通过本轮已批准的 P4 控制面使用。P5 已授权按保护策略实现，真实供应商验收依赖本地凭据及获准额度；P6 尚未授权。
 
 ## 8 跟随 P2 任务
 
@@ -115,4 +115,24 @@ orchestration/checkpoints.py 的 PostgresTaskSaver 实现 LangGraph 异步保存
 
 最后读 `tests/unit/test_mcp_policy.py`、`tests/http/test_capabilities_api.py`、`tests/integration/test_capabilities.py` 和 `frontend/tests/capabilities.spec.ts`：分别验证 Schema/签名、角色边界、真实数据库/子进程与真实浏览器。传输丢失和审计故障使用显式故障注入，不能把它们当成独立远程服务器验收；正常读写链路确实启动项目 MCP Server。
 
-运行 `scripts/test-p4.ps1` 会同时执行 P3 Docker 安全回归。最终数量、修复与限制见 P4_REPORT。完成 P4 后停在本阶段，不继续 P5。
+运行 `scripts/test-p4.ps1` 会同时执行 P3 Docker 安全回归。P4 历史数量、修复与限制见 P4_REPORT；当前另按明确授权实施 P5，完整回归使用 `scripts/test-p5.ps1`。
+
+## 13 四个槽位如何连接真实 API
+
+先读 MODEL_INTEGRATION 和 P5_REPORT。看 schemas/models.py 的 priority/credential_reference，再看 services/models.py：列表只返回引用和配置状态，实际 Key 在 providers/router.py 的调用边界解析。比较全局主机白名单与单凭据受众绑定，两者都需要满足。
+
+接着读 providers/base.py 的 ProviderAdapter/ModelReply/ProviderFailure，再跟随 openai_compatible.py：DNS 全地址检查、固定 IP + Host/SNI、TLS、无代理/重定向、有界 SSE、终止标志与 usage。MockTransport 只验证协议处理，当前没有真实供应商连通验收。
+
+## 14 顺着一次 P5 协作读代码
+
+TaskService.create 保存角色/价格快照 → Redis/Worker领取租约 → RealRuntime.operation 原子预留 → Provider Adapter 调用 → Pydantic AgentPlan/Answer/Review → 持久化安全结果和用量 → LangGraph依赖分支/汇聚 → AgentToolGateway → Reviewer有限反馈。
+
+重点比较 ModelOperation 逻辑标识、PostgresTaskSaver 检查点与 AgentToolOperation：已完成模型结果复用，未知真实派发不自动重计费；工具用稳定 key/任务/fence 绑定，不因模型重试而重复。P4 控制面和 P3 Runner 都再次校验权限与父任务。存在冲突会强制修订，Reviewer不能批准高风险执行。
+
+暂停为协作式，当前请求先完成并保存，下一节点暂停；取消/期限关闭模型流并阻止新步骤。RealDailyUsage 与原 Mock 额度分开，未知费用不释放为零。看 real_runtime.py 的 reserve/settle 与 Worker.release_reservations 的 Mock/Real 区分，再读取消、租约恢复与单独测试额度。
+
+## 15 通过测试区分真实能力与替身证据
+
+test_model_adapter.py 用明确 MockTransport；test_real_agents.py 使用真实 PostgreSQL/Redis/LangGraph 和明确 Provider Stub，包含真实 MCP/P3 Docker。p5-worker-recovery-probe.py 真正终止并重启专用 OS Worker，但模型仍为 Stub。最后单独运行 test-real-models.py；当前 BLOCKED、外部请求0次，不能把前几类测试当供应商验收。
+
+前端读 ModelCenter.tsx 的安全引用/连接测试、Tasks.tsx 的 Real/Mock/DAG/工具/预算、Chat.tsx 的持久化历史与 SSE。密钥只在本地受保护环境设置。完成本阶段后暂停，P6 需要新授权。

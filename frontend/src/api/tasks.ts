@@ -1,8 +1,10 @@
 export type TaskRecord = {
   task_id: string; goal: string; status: string; is_mock: boolean; version: number;
+  options?: { workflow?: string; conversation_id?: string; chat_role?: string };
+  tools?: { operation_id: string; tool: string; call_id: string | null; sandbox_execution_id: string | null; result: unknown }[];
   plan_hash: string | null; iterations: number; error_code: string | null;
   result: { summary: string } | null;
-  usage: { input_output_tokens: number; model_attempts: number; mock_cost_usd: string; real_cost_usd: string };
+  usage: { input_output_tokens: number; model_attempts: number; mock_cost_usd: string; real_cost_usd: string; reserved_real_cost_usd?: string; cost_status?: string };
   calls?: { operation_id: string; role: string; state: string; latency_ms: number | null; is_mock: boolean }[];
 };
 export type Approval = { approval_id: string; task_id: string; operation_hash: string; status: string; is_mock: boolean; type: string };

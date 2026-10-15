@@ -18,18 +18,24 @@ def validate_configuration(config: ModelConfig, settings: Settings) -> None:
         except ValueError:
             raise AppError("INVALID_MODEL_ENDPOINT", "Model endpoint is not approved", 422) from None
     if config.enabled and config.provider != "mock":
-        ref = config.credential_reference or ""
-        if not os.environ.get(ref.removeprefix("env:")):
-            raise AppError("CREDENTIAL_UNAVAILABLE", "Protected credential reference is unavailable", 422)
+        from app.providers.router import resolve_credential
+        resolve_credential(config.credential_reference, settings)
 
 
 def slot_dto(slot: ModelSlot) -> dict:
     config = {name: getattr(slot, name) for name in ModelConfig.model_fields}
     return {
         "role": slot.role, **config, "version": slot.version,
-        "is_mock": slot.provider == "mock", "call_status": "not_implemented",
-        "credential_configured": bool(slot.credential_reference and os.environ.get(slot.credential_reference.removeprefix("env:"))),
+        "is_mock": slot.provider == "mock", "call_status": "mock" if slot.provider == 'mock' else 'not_tested',
+        "credential_configured": credential_configured(slot.credential_reference),
     }
+
+
+def credential_configured(ref):
+    from dotenv import dotenv_values
+    from app.core.config import ROOT
+    name = (ref or '').removeprefix('env:')
+    return bool(ref and (os.environ.get(name) or dotenv_values(ROOT / '.env').get(name)))
 
 
 async def list_slots(session, tenant_id: str) -> list[dict]:
@@ -37,7 +43,16 @@ async def list_slots(session, tenant_id: str) -> list[dict]:
     by_role = {row.role: row for row in rows}
     if set(by_role) != {role.value for role in ModelRole}:
         raise AppError("MODEL_SLOTS_NOT_INITIALIZED", "Run project database migration", 503)
-    return [slot_dto(by_role[role.value]) for role in ModelRole]
+    from app.domain.tasks import ModelOperation, AgentTask
+    result = []
+    for role in ModelRole:
+        dto = slot_dto(by_role[role.value])
+        last = await session.scalar(select(ModelOperation).join(AgentTask).where(AgentTask.tenant_id == UUID(tenant_id),
+            ModelOperation.role == role.value, ModelOperation.is_mock.is_(False),
+            AgentTask.model_snapshot[role.value]['config_version'].astext == str(by_role[role.value].version)).order_by(ModelOperation.started_at.desc()).limit(1))
+        dto['call_status'] = last.error_code or last.state if last else ('mock' if dto['is_mock'] else 'not_tested')
+        result.append(dto)
+    return result
 
 
 async def update_slot(session, tenant_id: str, role: ModelRole, config: ModelUpdate, settings: Settings) -> dict:

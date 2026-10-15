@@ -96,6 +96,11 @@ class ModelOperation(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     reservation_day: Mapped[date] = mapped_column(Date, server_default=func.current_date())
+    usage_status: Mapped[str] = mapped_column(String(24), default='mock', server_default='mock')
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
+    first_token_ms: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    http_status: Mapped[int | None] = mapped_column(Integer)
 
 
 class TenantUsage(Base):

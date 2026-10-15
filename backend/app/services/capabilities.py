@@ -83,13 +83,19 @@ async def enabled_skill(session, tenant, ref, tool):
 
 
 def operation_digest(row, skill_snapshot=None):
-    return content_hash({"tenant": str(row.tenant_id), "tool": row.tool, "version": row.tool_version,
+    payload = {"tenant": str(row.tenant_id), "tool": row.tool, "version": row.tool_version,
                          "resource": row.resource, "arguments": row.arguments, "skill": skill_snapshot,
                          "permission_generation": row.permission_generation, "policy": row.policy_version,
-                         "requester": row.requester})
+                         "requester": row.requester}
+    if getattr(row, 'task_context', None):
+        payload['task_context'] = row.task_context
+    return content_hash(payload)
 
 
 async def authorize_call(session, row):
+    if getattr(row, 'task_context', None):
+        from app.services.agent_tools import authorize_parent
+        await authorize_parent(session, row.tenant_id, row.task_context, active=row.status in {'ready', 'dispatched'})
     if row.policy_version != POLICY_VERSION or row.tool not in CATALOG or row.tool_version != CATALOG[row.tool]["version"]:
         raise AppError("TOOL_POLICY_CHANGED", "Tool policy changed", 409)
     try:

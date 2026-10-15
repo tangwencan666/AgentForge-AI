@@ -135,6 +135,9 @@ class SandboxRunner:
             approval = await session.get(TaskApproval, row.approval_reference)
             try:
                 validate_execution(row, approval, task, self.settings)
+                if row.parent_context:
+                    from app.services.agent_tools import authorize_parent
+                    await authorize_parent(session, row.tenant_id, row.parent_context, sandbox=True)
             except PolicyViolation as exc:
                 raise AppError(str(exc), "Sandbox execution is not authorized", 403) from None
             if self.blocked:
@@ -186,6 +189,9 @@ class SandboxRunner:
             if not started:
                 check_lease(task, request.owner, request.fence)
                 validate_execution(row, await session.get(TaskApproval, row.approval_reference), task, self.settings)
+                if row.parent_context:
+                    from app.services.agent_tools import authorize_parent
+                    await authorize_parent(session, row.tenant_id, row.parent_context, sandbox=True)
             if container_id:
                 row.container_id = container_id
             if started:
@@ -201,6 +207,12 @@ class SandboxRunner:
                 assert_runner_lease(row, self.owner, now())
             except PolicyViolation:
                 return "RUNNER_LEASE_LOST"
+            if row.parent_context:
+                from app.services.agent_tools import authorize_parent
+                try:
+                    await authorize_parent(session, row.tenant_id, row.parent_context, sandbox=True)
+                except AppError:
+                    return 'AGENT_PARENT_STOPPED'
             if task.deadline <= now():
                 return "TASK_TIMEOUT"
             if task.status in {"cancel_requested", "cancelled"}:

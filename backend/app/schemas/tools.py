@@ -43,7 +43,7 @@ class ToolRequest(StrictModel):
 
 
 class PermissionUpdate(StrictModel):
-    tool: ToolName
+    tool: Literal['notes.read', 'notes.write', 'sandbox.execute']
     resource: Slug
     allowed: bool
 

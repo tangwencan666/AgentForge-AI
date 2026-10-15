@@ -5,11 +5,12 @@ import subprocess
 import sys
 from urllib.parse import quote
 from dotenv import dotenv_values
+from app.core.config import is_model_credential_name
 
 root = Path(__file__).resolve().parents[1]
 local = dotenv_values(root / '.env')
 values = [value for key, value in local.items() if value and (
-    'PASSWORD' in key or 'TOKEN' in key or key.startswith('AGENTFORGE_MODEL_') or key.endswith('_URL')
+    'PASSWORD' in key or 'TOKEN' in key or is_model_credential_name(key) or key.endswith('_URL')
 )]
 patterns = set()
 for value in values:
@@ -35,7 +36,7 @@ for name in filter(None, staged):
 for file in (root / 'frontend' / 'dist').rglob('*'):
     if file.is_file() and any(pattern in file.read_bytes() for pattern in patterns):
         failures.append(str(file.relative_to(root)))
-reports = list((root / 'work').glob('*.log')) + list((root / 'work').glob('*.xml')) + list((root / 'work').glob('*e2e*.json'))
+reports = list((root / 'work').glob('*.log')) + list((root / 'work').glob('*.xml')) + list((root / 'work').glob('*e2e*.json')) + list((root / 'work').glob('*real-api*.json')) + list((root / 'work').glob('*worker-restart*.json'))
 for file in reports:
     if any(pattern in file.read_bytes() for pattern in patterns):
         failures.append(str(file.relative_to(root)))

@@ -7,6 +7,7 @@ from app.domain.entities import Base
 import app.domain.tasks  # P2 metadata
 import app.domain.sandbox  # P3 metadata
 import app.domain.tools  # P4 metadata
+import app.domain.real  # P5 metadata
 
 target_metadata = Base.metadata
 

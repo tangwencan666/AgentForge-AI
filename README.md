@@ -1,8 +1,8 @@
-# AgentForge AI P4 MCP Tools 与 Skills Registry
+# AgentForge AI P5 模型集成与有界协作
 
 2026 年 10 月 15 日，Asia/Shanghai。项目根目录：`D:\AIProjects\AgentForge-AI`。
 
-本项目按已确认的 P0 基线实现 P1–P4。现有骨架包括 FastAPI/React、四模型配置、真实 PostgreSQL/Redis、LangGraph 异步协作、审批、取消、预算预留和 SSE。P3 已实现并实际验收独立可信 Runner、受限 Docker Python 执行和真实 Sandbox Center。P4 增加真实受控 MCP stdio Client/Server、服务端 Tool Gateway 和声明式 Skills Registry。模型回答与模型费用仍为明确 Mock。
+本项目保留 P0–P4 基线，并按单独授权实现 P5。现有骨架包括 FastAPI/React、四模型配置、真实 PostgreSQL/Redis、LangGraph 异步协作、审批、取消、预算预留和 SSE。P3 已实现并实际验收独立可信 Runner、受限 Docker Python 执行和真实 Sandbox Center。P4 增加真实受控 MCP stdio Client/Server、服务端 Tool Gateway 和声明式 Skills Registry。P5 增加四模型适配、真实调用路径、服务端预算、有界协作和 Chat；当前未配置真实 Key/测试额度，外部 API 验收 BLOCKED，默认使用明确 Mock。
 
 ## 文档入口
 
@@ -15,6 +15,9 @@
 - [P3 实施与验收报告](docs/P3_REPORT.md)
 - [P4 契约与安全边界](docs/P4_CONTRACT.md)
 - [P4 实施与验收报告](docs/P4_REPORT.md)
+- [P5 开发与验收报告](docs/P5_REPORT.md)
+- [模型集成与预算边界](docs/MODEL_INTEGRATION.md)
+- [Multi-Agent 流程](docs/MULTI_AGENT.md)
 - [沙箱安全边界](docs/SANDBOX_SECURITY.md)
 - [沙箱执行协议](docs/SANDBOX_EXECUTION_PROTOCOL.md)
 - [P1 执行范围](docs/P1_SCOPE.md)
@@ -36,8 +39,10 @@ Docker 共享内核，存在逃逸及宿主机风险，不能视为绝对安全�
 
 ## 当前状态
 
-P4 编码和验收详情见 [P4_REPORT](docs/P4_REPORT.md)，最新状态见 [PROJECT_STATUS](docs/PROJECT_STATUS.md)。P0–P3 报告保留历史阶段事实。
+P5 实现与本地验收见 [P5_REPORT](docs/P5_REPORT.md)，真实外部 API 验收保持 **BLOCKED**（缺少真实模型 Key 与获准收费测试额度，实际请求 0 次）。自动化中的 Provider Stub 不算真实供应商验收。
 
-本地页面：MCP Tools `http://127.0.0.1:15173/mcp`；Skills Center `http://127.0.0.1:15173/skills`。先运行 `scripts/bootstrap-p4.py` 生成仅存项目 .env 的不同角色凭据，再升级到 `0005_capabilities` 并启动项目服务。完整命令见启动指南的 P4 章节。
+本地页面：Model Center `/models`、Agent Tasks `/tasks`、AI Chat `/chat`、MCP Tools `/mcp`、Sandbox Center `/sandbox`、Skills Center `/skills`；前端默认 `http://127.0.0.1:15173`。数据库版本 `0006_real_models`。
 
-P4 仅支持固定可信 stdio MCP Server 与声明式工具 Skill，不含远程 HTTP/OAuth、任意包下载安装、真实模型调用或生产部署。普通 MCP 笔记调用不执行用户代码；可执行 Python 继续使用 P3 Docker 审批链路。本轮完成后暂停，不进入 P5。
+真实调用需服务端开启、受保护凭据引用、端点受众绑定、经复核价格和预算。未配置时明确 Mock；真实故障不返回假结果。Key 只在本机环境配置，不发到聊天或前端。P3/P4 审批和沙箱策略继续强制执行。
+
+本轮交付后暂停，不进入 P6。生产 IAM、加密/保留治理、真实供应商与计费验收仍需完成，详见报告。

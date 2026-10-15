@@ -36,7 +36,7 @@ def test_enabled_slot_uses_protected_reference(settings, monkeypatch):
     with pytest.raises(AppError) as error:
         validate_configuration(config, settings)
     assert error.value.code == "CREDENTIAL_UNAVAILABLE"
-    monkeypatch.setenv("AGENTFORGE_MODEL_TEST", "unit-test-only")
+    monkeypatch.setenv("AGENTFORGE_MODEL_TEST", "unit-test-only-long-credential")
     validate_configuration(config, settings)
 
 

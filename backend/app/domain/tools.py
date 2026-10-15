@@ -36,6 +36,7 @@ class ToolCall(Base):
     approval_id: Mapped[UUID | None]
     result: Mapped[dict | None] = mapped_column(JSONB)
     remote_result: Mapped[dict | None] = mapped_column(JSONB)
+    task_context: Mapped[dict | None] = mapped_column(JSONB)
     error_code: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

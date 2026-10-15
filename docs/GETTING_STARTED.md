@@ -1,6 +1,6 @@
-# AgentForge AI P4 本地启动指南
+# AgentForge AI P5 本地启动指南
 
-2026 年 10 月 15 日，Asia/Shanghai。P4 已获开发授权，在 P3 真实 Docker 与 P2 持久化协作基础上增加受控 MCP Tool Gateway 和声明式 Skills Registry。模型回答和费用仍为明确 Mock。当前能力、实际验收和限制以 P4_REPORT、P4_CONTRACT 和 PROJECT_STATUS 为准；历史阶段证据保留。
+2026 年 10 月 15 日，Asia/Shanghai。当前阶段为 P5：在 P3 Sandbox、P4 Tool Gateway 与 Skills Registry 基础上增加四模型适配、预算和持久化协作。默认使用明确 Mock；真实模型需要服务端凭据及批准的额度。真实供应商验收当前 BLOCKED，外部调用0次。当前能力和限制以 P5_REPORT、MODEL_INTEGRATION 和 PROJECT_STATUS 为准；P0–P4 文档保留历史阶段证据。
 
 ## 1 环境与隔离
 
@@ -276,4 +276,44 @@ git ls-files --others --exclude-standard
 
 测试报告位于 work/p4-all.xml、work/p4-e2e.json，前端截图为 work/p4-mcp.png、work/p4-skills.png。缺失 opt-in 产生的 skip 不算验收通过。敏感信息检查覆盖当前已跟踪和新增未跟踪源码、前端产物、项目日志及测试报告，不依赖 git add。测试需要访问本机数据库、Docker 管道和无头浏览器；沙箱拒绝时按工具权限流程申请具体测试，不改 Git 或系统权限。
 
-本轮不操作 git add/commit，不改 .git 权限；完成后由用户在 CMD 手动提交。不进入 P5。
+以上为 P4 历史交付步骤；当时未进入 P5。当前 P5 按第12节的单独授权实施，仍不操作 git add/commit、不改 .git 权限，完成后由用户在 CMD 手动提交。
+
+## 12 P5 模型、任务和 Chat
+
+P5 已获单独开发授权；P3/P4 约束不变。当前迁移为 0006_real_models。启动前升级并检查，旧 API/Worker 需按项目归属重启：
+
+```powershell
+./.venv/Scripts/python.exe scripts/migrate.py upgrade
+./.venv/Scripts/python.exe scripts/migrate.py check
+./scripts/stop-local.ps1
+./scripts/start-local.ps1
+```
+
+Model Center `/models` 支持四槽位安全配置与 priority、状态和指标。Key 只能在受保护本机环境或被忽略 .env 设置，表单只接受 env 引用。未配置真实凭据/价格/受众/日预算时使用明确 Mock；服务端 REAL_CALLS_ENABLED 默认 false，测试额度0。不要粘贴 Key 到聊天。
+
+开启真实 API 前必须先批准实际模型、供应商端点、价格和有限收费测试额度，按 MODEL_INTEGRATION 配置。默认关闭的 policy 不是运行错误，是真实收费调用的门禁。测试按钮提交受独立额度约束的异步任务；无批准额度返回 MODEL_TEST_BUDGET_BLOCKED，不发起收费请求。
+
+Agent Tasks `/tasks` 可明确选择 Mock/Real 并收紧调用/Token/费用/deadline，展示真实计划、依赖、SSE、调用和工具记录。Real 协作要求四槽位可用；没有真实配置不能伪装成功。AI Chat `/chat` 为单角色异步对话、SSE增量与数据库会话历史，显示 Mock/Real。
+
+若 Coder 提议执行 Python，先在 MCP Tools 选择 sandbox.execute / python 精确授权，再到 Sandbox Center 用独立 P3 审批 Token 复核绑定代码；不允许宿主执行或放宽 Docker 策略。notes.write 继续使用独立 P4 审批。计划确认或 Reviewer 意见不能代替这些批准。
+
+```powershell
+# 先更新项目可信 Runner；仅使用既有已批准沙箱镜像。
+docker compose --profile sandbox build runner
+docker compose --profile sandbox up -d --no-deps --no-build runner
+./scripts/test-p5.ps1
+# 浏览器测试应在上条脚本恢复 Worker 后顺序运行。
+$env:AGENTFORGE_RUN_INTEGRATION='1'
+$env:AGENTFORGE_RUN_SANDBOX='1'
+Push-Location frontend
+npm run build
+npm run test:e2e
+Pop-Location
+# 单独真实供应商验收：缺配置/批准额度时返回 BLOCKED（退出码2），不算通过。
+./.venv/Scripts/python.exe scripts/test-real-models.py
+./.venv/Scripts/python.exe scripts/check_secrets.py
+```
+
+实际 OS 重启探针需要独占项目 Worker；先 stop-worker，再运行 p5-worker-recovery-probe.py，最后 start-local。探针使用明确 Provider Stub，按脚本路径和随机测试租户核对进程归属，不终止其他项目进程。不要与依赖 Worker 的浏览器或全量测试并行运行。
+
+证据：work/p5-all.xml、p5-e2e.json、p5-worker-restart.json、p5-real-api.json，截图 p5-models.png/p5-chat.png。真实模型 Key 与批准测试额度仍未提供，供应商验收 BLOCKED。P5报告完整记录已验证与未验证内容；交付后停在本阶段，不进入 P6。

@@ -1,6 +1,7 @@
 from decimal import Decimal
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
+from uuid import UUID
 
 
 class MockOptions(BaseModel):
@@ -13,7 +14,10 @@ class MockOptions(BaseModel):
 class TaskCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     goal: str = Field(min_length=1, max_length=12000)
-    execution_mode: Literal["mock"]
+    execution_mode: Literal["mock", "real"]
+    workflow: Literal['agents', 'chat'] = 'agents'
+    chat_role: Literal['planner', 'coder', 'researcher', 'reviewer'] = 'coder'
+    conversation_id: UUID | None = None
     worker_dependency: Literal["independent", "research_first", "code_first"] = "independent"
     require_approval: bool = True
     timeout_seconds: int = Field(default=900, ge=1, le=900, strict=True)

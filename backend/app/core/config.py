@@ -10,6 +10,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def is_model_credential_name(name: str) -> bool:
+    return name.startswith('AGENTFORGE_MODEL_') and name not in {
+        'AGENTFORGE_MODEL_PRICES', 'AGENTFORGE_MODEL_CREDENTIAL_HOSTS',
+    }
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="AGENTFORGE_", env_file=ROOT / ".env", extra="ignore",
@@ -30,6 +36,13 @@ class Settings(BaseSettings):
     capability_approver_token: SecretStr | None = Field(default=None, repr=False)
     mcp_daily_call_limit: int = Field(default=1000, ge=1, le=100000)
     mcp_timeout_seconds: float = Field(default=8, gt=0, le=8)
+    real_calls_enabled: bool = False
+    real_daily_budget_usd: Decimal = Field(default=Decimal('0'), ge=0, le=100, allow_inf_nan=False)
+    real_daily_token_limit: int = Field(default=100000, ge=1, le=1000000)
+    real_test_budget_usd: Decimal = Field(default=Decimal('0'), ge=0, le=1, allow_inf_nan=False)
+    real_test_max_calls: int = Field(default=1, ge=1, le=4)
+    model_prices: dict = Field(default_factory=dict)
+    model_credential_hosts: dict = Field(default_factory=dict)
     sandbox_image_id: str | None = None
     sandbox_runner_url: str = "http://127.0.0.1:18120"
     sandbox_daily_cpu_seconds: Decimal = Field(default=Decimal("3600"), gt=0, le=86400)

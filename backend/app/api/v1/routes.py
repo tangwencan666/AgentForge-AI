@@ -11,8 +11,8 @@ router = APIRouter(prefix="/api/v1")
 
 @router.get("/system", response_model=ApiResponse)
 async def system():
-    return envelope({"name": "AgentForge AI", "phase": "P4", "model_calls": "mock_only",
-                     "agent_execution": "langgraph_mock_workflow", "sandbox_execution": "approved_docker",
+    return envelope({"name": "AgentForge AI", "phase": "P5", "model_calls": "explicit_mock_or_configured_real",
+                     "agent_execution": "bounded_langgraph_workflow", "sandbox_execution": "approved_docker",
                      "mcp_execution": "controlled_stdio_gateway", "skills_execution": "approved_declarative_tools"})
 
 

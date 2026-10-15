@@ -21,6 +21,7 @@ class SandboxExecution(Base):
     policy_version: Mapped[str] = mapped_column(String(32))
     approval_reference: Mapped[UUID] = mapped_column(ForeignKey("task_approvals.id"))
     requester: Mapped[str] = mapped_column(String(32), default="local-admin")
+    parent_context: Mapped[dict | None] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String(32), default="awaiting_approval", index=True)
     container_name: Mapped[str | None] = mapped_column(String(80))
     container_id: Mapped[str | None] = mapped_column(String(64))

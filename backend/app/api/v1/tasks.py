@@ -41,6 +41,16 @@ async def list_approvals(request: Request, tenant: str = Depends(require_admin))
     return envelope(await service(request).approvals(tenant))
 
 
+@router.post('/tasks/{task_id}/pause', response_model=ApiResponse)
+async def pause_task(task_id: UUID, request: Request, tenant: str = Depends(require_admin)):
+    return envelope(await service(request).pause(task_id, tenant))
+
+
+@router.post('/tasks/{task_id}/resume', response_model=ApiResponse)
+async def resume_task(task_id: UUID, request: Request, tenant: str = Depends(require_admin)):
+    return envelope(await service(request).pause(task_id, tenant, resume=True))
+
+
 @router.post("/approvals/{approval_id}/decision", response_model=ApiResponse)
 async def decide_approval(approval_id: UUID, body: ApprovalDecision, request: Request, tenant: str = Depends(require_admin)):
     return envelope(await service(request).decide(approval_id, tenant, body))

@@ -20,6 +20,15 @@ class ModelConfig(BaseModel):
     max_tokens: int = Field(default=4096, ge=1, le=131072)
     timeout: int = Field(default=60, ge=1, le=300)
     enabled: bool = False
+    priority: int = Field(default=50, ge=0, le=100)
+
+    @field_validator('credential_reference')
+    @classmethod
+    def credential_is_not_policy(cls, value):
+        from app.core.config import is_model_credential_name
+        if value is not None and not is_model_credential_name(value.removeprefix('env:')):
+            raise ValueError('model policy variables cannot be credential references')
+        return value
 
     @field_validator("provider")
     @classmethod

@@ -8,7 +8,7 @@ from app.services.tool_policy import ToolGrant, authorize_tool
 from app.core.errors import AppError
 
 
-@pytest.mark.parametrize('changes', [{'execution_mode':'real'},{'max_iterations':9},{'max_calls':33},{'max_tokens':100001},
+@pytest.mark.parametrize('changes', [{'execution_mode':'unrestricted'},{'max_iterations':9},{'max_calls':33},{'max_tokens':100001},
     {'max_budget_usd':'1.01'},{'timeout_seconds':901},{'mock_options':{'latency_ms':2001}},{'goal':''},{'approved':True}])
 def test_task_limits_and_real_mode_are_not_bypassable(changes):
     with pytest.raises(ValidationError):

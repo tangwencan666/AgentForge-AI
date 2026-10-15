@@ -88,9 +88,16 @@ class Worker:
                     if approval:
                         approval.status = "expired" if expired else "cancelled"
                     event(session, task, "status", {"status":task.status})
+                elif task.status == 'waiting_tools' and not task.owner:
+                    from app.services.agent_tools import tools_ready
+                    if await tools_ready(self.connections, task):
+                        task.status = 'queued'
+                        session.add(Outbox(id=uuid4(), task_id=task.id))
+                elif task.status == 'pause_requested' and (not task.owner or lease_expired):
+                    task.status, task.owner, task.lease_until = 'paused', None, None
                 elif lease_expired:
                     task.owner, task.lease_until = None, None
-                    if task.status == "waiting_approval":
+                    if task.status in {"waiting_approval", "waiting_tools", "paused"}:
                         continue
                     task.status = "queued"
                     if task.attempts >= 3:
@@ -114,6 +121,8 @@ class Worker:
     @staticmethod
     async def release_reservations(session, task, operations):
         for op in operations:
+            if not op.is_mock:
+                continue  # Real dispatch reservations survive cancellation/unknown outcomes.
             quota = await tenant_usage(session,task.tenant_id,op.reservation_day)
             # Mock only: no supplier charge. Preserve explicit simulated input accounting.
             op.state, op.finished_at = "cancelled", now()
@@ -132,7 +141,7 @@ class Worker:
             # Project-scoped advisory lock serializes global capacity decisions.
             await session.execute(text("SELECT pg_advisory_xact_lock(472902)"))
             task = await locked_task(session, task_id)
-            if not task.is_mock and task.options.get("workflow") != "sandbox":
+            if not task.is_mock and task.options.get("workflow") not in {"sandbox", "agents", "chat"}:
                 task.status, task.error_code = "failed", "REAL_MODE_UNAVAILABLE"
                 event(session, task, "status", {"status":task.status,"error_code":task.error_code})
                 return None
@@ -187,14 +196,23 @@ class Worker:
                 task.status, task.error_code = "timed_out", "TASK_TIMEOUT"
             elif task.status == "cancel_requested":
                 task.status, task.error_code = "cancelled", "TASK_CANCELLED"
-            elif task.status == "waiting_approval":
+            elif task.status in {"waiting_approval", "waiting_tools", "paused"}:
                 pass
+            elif task.status == "pause_requested":
+                task.status = "paused"
             elif stopping:
                 task.status = "queued"
                 session.add(Outbox(id=uuid4(), task_id=task.id))
             elif error:
-                task.status = "limit_exceeded" if error == "TASK_LIMIT" else "failed"
+                task.status = "limit_exceeded" if error == "TASK_LIMIT" else ("needs_reconciliation" if error == "MODEL_OUTCOME_UNKNOWN" else "failed")
                 task.error_code = error
+            elif not task.is_mock:
+                task.status = 'succeeded'
+                final_id = result.get('chat') or result.get('review')
+                final = await session.get(ModelOperation, (task.id, final_id)) if final_id else None
+                task.result = {'is_mock': False, 'summary': (final.result or {}).get('summary', '') if final else '',
+                    'coder': result.get('coder'), 'researcher': result.get('researcher'), 'reviewer': result.get('review'),
+                    'evidence_status': 'provider_output_not_external_verification'}
             else:
                 task.status = "succeeded"
                 task.result = {"is_mock":True,"summary":"[MOCK] Workflow completed; no real model, tool or code execution",
@@ -217,8 +235,13 @@ class Worker:
                 from app.services.orchestration.sandbox_graph import build_sandbox_graph
                 graph=build_sandbox_graph(self.connections,self.settings,task_id,tenant_id,self.owner,fence,saver)
             else:
-                runtime = Runtime(self.connections, self.settings, task_id, tenant_id, self.owner, fence)
-                graph = build_graph(runtime, saver)
+                from app.services.orchestration.real_runtime import RealRuntime
+                runtime = (Runtime if task.is_mock else RealRuntime)(self.connections, self.settings, task_id, tenant_id, self.owner, fence)
+                if task.options.get('workflow') == 'chat':
+                    from app.services.orchestration.chat_graph import build_chat_graph
+                    graph = build_chat_graph(runtime, saver)
+                else:
+                    graph = build_graph(runtime, saver, priorities={role: cfg.get('priority', 50) for role, cfg in task.model_snapshot.items()})
             config = {"configurable":{"thread_id":str(task_id)},"recursion_limit":100,"callbacks":[]}
             saved = await saver.aget_tuple(config)
             resume = None

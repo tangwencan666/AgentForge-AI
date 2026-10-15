@@ -1,6 +1,7 @@
 import { taskRequest } from './tasks';
 
 export type ToolName = 'notes.read' | 'notes.write';
+export type PermissionTool = ToolName | 'sandbox.execute';
 export type SkillRef = { skill_id: string; version: string };
 export type Skill = SkillRef & {
   content_hash: string; status: string; source: string; generation: number; approval_id: string | null;
@@ -12,7 +13,7 @@ export type Call = {
 };
 export type Approval = { approval_id: string; target_id: string; action: string; status: string; operation_hash: string; expires_at: string };
 export type Review = Approval & { target: Record<string, unknown>; dependency_closure?: Record<string, unknown>[] };
-export type Grant = { tool: ToolName; resource: string; allowed: boolean; generation: number };
+export type Grant = { tool: PermissionTool; resource: string; allowed: boolean; generation: number };
 export type Catalog = { configured: boolean; transport: string; policy_version: string; daily_call_limit: number; timeout_seconds: number;
   tools: { name: ToolName; version: string; high_risk: boolean; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> }[] };
 export type Audit = { id: string; event: string; target_id: string; details: Record<string, unknown> };
@@ -20,7 +21,7 @@ export type Audit = { id: string; event: string; target_id: string; details: Rec
 export const capabilitiesApi = {
   catalog: (token: string, signal?: AbortSignal) => taskRequest<Catalog>('/mcp/tools', token, { signal }),
   grants: (token: string, signal?: AbortSignal) => taskRequest<Grant[]>('/mcp/permissions', token, { signal }),
-  grant: (token: string, body: { tool: ToolName; resource: string; allowed: boolean }) => taskRequest<Grant>('/mcp/permissions', token, { method: 'PUT', body: JSON.stringify({ tool: body.tool, resource: body.resource, allowed: body.allowed }) }),
+  grant: (token: string, body: { tool: PermissionTool; resource: string; allowed: boolean }) => taskRequest<Grant>('/mcp/permissions', token, { method: 'PUT', body: JSON.stringify({ tool: body.tool, resource: body.resource, allowed: body.allowed }) }),
   calls: (token: string, signal?: AbortSignal) => taskRequest<Call[]>('/mcp/calls', token, { signal }),
   prepare: (token: string, tool: ToolName, args: Record<string, unknown>, skill?: SkillRef) => taskRequest<Call>('/mcp/calls', token,
     { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ tool, arguments: args, skill: skill ? { skill_id: skill.skill_id, version: skill.version } : null }) }),

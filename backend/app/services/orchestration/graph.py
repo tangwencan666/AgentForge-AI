@@ -33,7 +33,12 @@ def validate_plan(plan):
     return graph
 
 
-def build_graph(runtime, saver):
+def dispatch_order(priorities):
+    return sorted(['coder_parallel', 'researcher_parallel'], key=lambda name: (priorities.get(name.split('_')[0], 50), name))
+
+
+def build_graph(runtime, saver, priorities=None):
+    priorities = priorities or {}
     async def planner(state):
         options = await runtime.options()
         mode = options["worker_dependency"]
@@ -63,7 +68,7 @@ def build_graph(runtime, saver):
             return "research_first"
         if dependencies["researcher"]:
             return "code_first"
-        return ["coder_parallel", "researcher_parallel"]
+        return dispatch_order(priorities)
 
     async def coder(state):
         result = await runtime.operation("coder", state["round"], {"summary":"[MOCK] Coder draft; no code was executed"})
@@ -77,7 +82,13 @@ def build_graph(runtime, saver):
         options = await runtime.options()
         revise = state["round"] < options["mock_options"]["review_rounds"]
         result = await runtime.operation("reviewer", state["round"], {"summary":"[MOCK] Reviewer feedback; not a permission grant", "needs_revision":revise})
-        return {"review":result["operation_id"],"needs_revision":revise}
+        return {"review":result["operation_id"],"needs_revision":result.get("needs_revision", revise) or bool(result.get('conflicts'))}
+
+    async def tools(state):
+        if (await runtime.options()).get('execution_mode') == 'real':
+            from app.services.agent_tools import AgentToolGateway
+            return await AgentToolGateway(runtime.connections, runtime.settings).progress(runtime, state['round'])
+        return {}
 
     async def increment(state):
         return {"round":state["round"] + 1}
@@ -85,17 +96,18 @@ def build_graph(runtime, saver):
     builder = StateGraph(GraphState)
     for name, fn in [("planner",planner),("approval",approve),("dispatch",dispatch),("coder_parallel",coder),
                      ("researcher_parallel",researcher),("research_first",researcher),("code_after_research",coder),
-                     ("code_first",coder),("research_after_code",researcher),("reviewer",review),("increment",increment)]:
+                     ("code_first",coder),("research_after_code",researcher),("tools",tools),("reviewer",review),("increment",increment)]:
         builder.add_node(name, fn)
     builder.add_edge(START,"planner")
     builder.add_edge("planner","approval")
     builder.add_edge("approval","dispatch")
     builder.add_conditional_edges("dispatch",route_workers)
-    builder.add_edge(["coder_parallel","researcher_parallel"],"reviewer")
+    builder.add_edge(["coder_parallel","researcher_parallel"],"tools")
     builder.add_edge("research_first","code_after_research")
-    builder.add_edge("code_after_research","reviewer")
+    builder.add_edge("code_after_research","tools")
     builder.add_edge("code_first","research_after_code")
-    builder.add_edge("research_after_code","reviewer")
+    builder.add_edge("research_after_code","tools")
+    builder.add_edge("tools", "reviewer")
     builder.add_conditional_edges("reviewer",lambda state:"increment" if state["needs_revision"] else END)
     builder.add_edge("increment","dispatch")
     return builder.compile(checkpointer=saver)

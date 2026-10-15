@@ -43,7 +43,7 @@ class SandboxService:
             "network":"none","root_filesystem":"read_only","user":"10001:10001",
             "daily_cpu_seconds_limit":str(self.settings.sandbox_daily_cpu_seconds)}
 
-    async def create(self, tenant, key, request: SandboxCreate):
+    async def create(self, tenant, key, request: SandboxCreate, *, parent_context=None):
         self.configured()
         from app.sandbox.policy import operation_digest
         code = request.code.get_secret_value()
@@ -58,6 +58,9 @@ class SandboxService:
         reservation = Decimal(str(limits["cpu"])) * request.timeout_seconds
         async with self.connections.sessions() as session, session.begin():
             await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"), {"key":tenant+":"+str(key)})
+            if parent_context:
+                from app.services.agent_tools import authorize_parent
+                await authorize_parent(session, UUID(tenant), parent_context, active=True, sandbox=True)
             old = (await session.scalars(select(AgentTask).where(AgentTask.tenant_id==UUID(tenant), AgentTask.idempotency_key==key))).one_or_none()
             if old:
                 if old.request_hash != digest or old.options.get("workflow") != "sandbox":
@@ -76,6 +79,9 @@ class SandboxService:
                 model_snapshot={},status="queued",is_mock=False,deadline=now()+timedelta(seconds=900),
                 token_limit=1,call_limit=1,iteration_limit=1,budget_limit=Decimal(0),plan_hash=op_hash)
             session.add(task)
+            if parent_context:
+                parent = await session.get(AgentTask, UUID(parent_context['task_id']))
+                task.deadline = min(task.deadline, parent.deadline)
             await session.flush()
             approval = TaskApproval(id=approval_id,task_id=task_id,tenant_id=UUID(tenant),operation_hash=op_hash,
                 policy_version=POLICY_VERSION,expires_at=task.deadline,status="pending")
@@ -85,6 +91,7 @@ class SandboxService:
                 code=code,code_hash=code_hash,operation_hash=op_hash,timeout_seconds=request.timeout_seconds,
                 resource_limits=limits,policy_version=POLICY_VERSION,approval_reference=approval_id,
                 requester="local-admin",status="awaiting_approval",image_id=self.settings.sandbox_image_id,
+                parent_context=parent_context,
                 budget_day=day,reserved_cpu_seconds=reservation)
             session.add(row)
             event(session,task,"sandbox_submitted",{"execution_id":str(execution_id),"code_hash":code_hash,"policy_version":POLICY_VERSION})

@@ -11,7 +11,7 @@ def test_liveness_does_not_claim_dependencies_up(settings):
     with TestClient(create_app(settings, connections)) as client:
         response = client.get("/health/live")
         assert response.status_code == 200
-        assert response.json()["data"] == {"status": "alive", "phase": "P4"}
+        assert response.json()["data"] == {"status": "alive", "phase": "P5"}
         assert response.json()["request_id"] == response.headers["X-Request-ID"]
     assert connections.closed
 
@@ -58,8 +58,8 @@ def test_validation_does_not_echo_api_key_or_body(settings, capsys):
 def test_no_model_success_is_fabricated(settings):
     with TestClient(create_app(settings, StubConnections())) as client:
         body = client.get('/api/v1/system').json()
-        assert body['data']['model_calls'] == 'mock_only'
-        assert client.post('/api/v1/chat', json={"message": "test"}).status_code == 404
+        assert body['data']['model_calls'] == 'explicit_mock_or_configured_real'
+        assert client.post('/api/v1/chat', json={"message": "test"}).status_code == 401
         validated = client.post('/api/v1/model-slots/validate', json={"provider": "mock", "model": "mock-test", "enabled": True},
                                 headers={"Authorization": f"Bearer {settings.admin_token.get_secret_value()}"})
         assert validated.json()['data'] == {"valid": True, "is_mock": True, "call_status": "not_implemented"}

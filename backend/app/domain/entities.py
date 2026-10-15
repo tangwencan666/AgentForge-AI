@@ -27,4 +27,5 @@ class ModelSlot(Base):
     timeout: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    priority: Mapped[int] = mapped_column(Integer, default=50, server_default="50")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

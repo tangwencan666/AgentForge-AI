@@ -61,7 +61,7 @@ class ToolGateway:
             await self.refused(tenant, body.tool, exc.code)
             raise
 
-    async def _create(self, tenant, key, body):
+    async def _create(self, tenant, key, body, *, task_context=None):
         if not self.settings.mcp_server_token:
             raise AppError("MCP_UNAVAILABLE", "Controlled MCP Server is not configured", 503)
         spec = CATALOG[body.tool]
@@ -89,6 +89,7 @@ class ToolGateway:
                            tool_version=spec["version"], resource=args["resource"], arguments=args, request_hash=digest,
                            permission_generation=grant.generation, skill=ref, policy_version=POLICY_VERSION,
                            requester="local-admin", status="awaiting_approval" if spec["high_risk"] else "ready")
+            row.task_context = task_context
             row.operation_hash = operation_digest(row, snapshot)
             if spec["high_risk"]:
                 if not self.settings.capability_approver_token:

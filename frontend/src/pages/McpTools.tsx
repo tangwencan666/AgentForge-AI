@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { capabilitiesApi, type Audit, type Call, type Catalog, type Grant, type ToolName } from '../api/capabilities';
+import { capabilitiesApi, type Audit, type Call, type Catalog, type Grant, type PermissionTool } from '../api/capabilities';
 import { LocalAuthForm, useLocalAuth } from '../components/LocalAuth';
 import CapabilityApproval from '../components/CapabilityApproval';
 import ToolComposer from '../components/ToolComposer';
@@ -13,7 +13,7 @@ export default function McpTools() {
   const [audit, setAudit] = useState<Audit[]>([]);
   const [selected, setSelected] = useState('');
   const [resource, setResource] = useState('project-notes');
-  const [tool, setTool] = useState<ToolName>('notes.read');
+  const [tool, setTool] = useState<PermissionTool>('notes.read');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const current = calls.find(row => row.call_id === selected);
@@ -42,7 +42,8 @@ export default function McpTools() {
         {catalog.tools.map(item => <details key={item.name}><summary>{item.name} @ {item.version} · {item.high_risk ? '高风险 / 独立审批' : '读取'}</summary><pre>{JSON.stringify({ input: item.inputSchema, output: item.outputSchema }, null, 2)}</pre></details>)}</>}
     </section><div className="p4-columns"><section className="panel"><h2>资源授权</h2><p>本地管理员为精确工具和资源配置权限。撤权后，已准备和已批准但未执行的调用也会被拒绝。</p>
       <form className="p4-form" onSubmit={e => { e.preventDefault(); void perform(() => capabilitiesApi.grant(token, { tool, resource, allowed: true })); }}>
-        <label>授权工具<select aria-label="授权工具" value={tool} onChange={e => setTool(e.target.value as ToolName)}><option>notes.read</option><option>notes.write</option></select></label>
+        <label>授权工具<select aria-label="授权工具" value={tool} onChange={e => { setTool(e.target.value as PermissionTool); if (e.target.value === 'sandbox.execute') setResource('python'); }}><option>notes.read</option><option>notes.write</option><option>sandbox.execute</option></select></label>
+        {tool === 'sandbox.execute' && <p className="muted">Agent Python 执行只使用 python 资源，并继续经过 P3 独立代码复核与受限 Docker Runner。</p>}
         <label>授权资源<input aria-label="授权资源" value={resource} pattern="[a-z][a-z0-9-]{0,47}" maxLength={48} required onChange={e => setResource(e.target.value)} /></label><button disabled={busy}>保存资源授权</button>
       </form><ul className="p4-list">{grants.map(g => <li key={g.tool + g.resource}>{g.tool} · {g.resource} · {g.allowed ? '允许' : '已撤销'} · v{g.generation}
         {g.allowed && <button disabled={busy} onClick={() => { void perform(() => capabilitiesApi.grant(token, { ...g, allowed: false })); }}>撤销 {g.tool} / {g.resource}</button>}</li>)}</ul>

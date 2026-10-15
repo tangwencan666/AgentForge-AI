@@ -45,5 +45,5 @@ if (-not $taskExistingWorker) {
     if (-not $taskExistingWorker) { throw 'P2 worker did not start; check project dependencies and work logs' }
 }
 $taskRecords += @{ name = 'worker'; pid = $taskExistingWorker.ProcessId; port = $null }
-Write-Output 'worker: independent process (Mock workflows and approved Docker dispatch)'
+Write-Output 'worker: independent process (explicit Mock or configured Real workflows; approved Docker dispatch)'
 $taskRecords | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $taskWork 'dev-pids.json') -Encoding utf8
