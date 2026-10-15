@@ -1,6 +1,6 @@
-# AgentForge AI P3 本地启动指南
+# AgentForge AI P4 本地启动指南
 
-2026 年 10 月 15 日，Asia/Shanghai。P3 已完成实际验收，现暂停等待 P4 授权。本项目保留 P1 基础与 P2 持久化协作，P3 增加独立可信 Runner、固定镜像 Docker Python 执行与 Sandbox Center。模型回答与费用仍为显式 Mock；真实模型 API、MCP/Skills 均未开放。本文说明启动和验收方法，完整证据见 P3_REPORT。
+2026 年 10 月 15 日，Asia/Shanghai。P4 已获开发授权，在 P3 真实 Docker 与 P2 持久化协作基础上增加受控 MCP Tool Gateway 和声明式 Skills Registry。模型回答和费用仍为明确 Mock。当前能力、实际验收和限制以 P4_REPORT、P4_CONTRACT 和 PROJECT_STATUS 为准；历史阶段证据保留。
 
 ## 1 环境与隔离
 
@@ -46,7 +46,7 @@ docker compose up -d --wait postgres redis
 ./.venv/Scripts/python.exe scripts/migrate.py current
 ```
 
-Alembic 保留 P1/P2 表；P3 的 0004_sandbox 在 0003_tenant_limits 之上增加 sandbox_executions 和 sandbox_daily_usage。用 current/check 确认本项目当前迁移，不能仅改文档宣称升级成功。应用连接使用非超级用户 agentforge，管理密码与应用密码独立。Redis 配置 AOF 与认证，不初始化其他项目数据。
+Alembic 保留 P1/P2 表；P3 的 0004_sandbox 增加沙箱表，P4 的 0005_capabilities 继续增加工具、审批、审计、Skill 和受管笔记表。用 current/check 确认本项目当前迁移，不能仅改文档宣称升级成功。应用连接使用非超级用户 agentforge，管理密码与应用密码独立。Redis 配置 AOF 与认证，不初始化其他项目数据。
 
 从 P2 升级时，已有健康 PostgreSQL/Redis 容器及卷应继续复用，不重建、清空或轮换其配置。先检查 `docker compose ps`，如果已运行，不必再次启动数据服务；只对本项目执行迁移。后续 Runner 使用 `--no-deps` 启动，避免修改现有数据容器。
 
@@ -228,6 +228,52 @@ docker ps -a --filter 'label=agentforge.sandbox.execution' --format '{{.Names}} 
 
 test-p3.ps1 明确启用真实 PostgreSQL/Redis 与 Docker 集成，并自动创建与最终删除自身的专用故障 Runner 服务；不停止共享 daemon 或删除其他容器。浏览器沙箱测试默认 skip，只有 AGENTFORGE_RUN_SANDBOX=1 才执行真实批准/拒绝流程。没有 opt-in 的绿灯不能算作沙箱 E2E 通过。
 
-本轮最终 Python 153/153 通过（单元/HTTP 117，真实集成 36，其中沙箱服务 16）；浏览器 8/8 通过（真实沙箱批准/拒绝 2，原核心 6），0 失败、0 跳过。类型检查、51 modules 构建、迁移与 pip check 通过。真实 OS Worker 重启探针通过；未专门强杀 Runner OS 覆盖全部恢复窗口，不能与受控租约测试混淆。详细证据与限制见 P3_REPORT。
+P3 历史验收 Python 153/153 通过（单元/HTTP 117，真实集成 36，其中沙箱服务 16）；浏览器 8/8 通过（真实沙箱批准/拒绝 2，原核心 6），0 失败、0 跳过。类型检查、51 modules 构建、迁移与 pip check 通过。真实 OS Worker 重启探针通过；未专门强杀 Runner OS 覆盖全部恢复窗口，不能与受控租约测试混淆。详细证据与限制见 P3_REPORT。
 
-最后一条 Docker 查询使用 execution 标签检查所有策略版本，只查询、不删除容器。本轮结束时已确认无遗留执行容器；未来发现遗留应检查精确名称、执行 ID、租约与清理状态，由受限 Runner 对账。禁止全局批量删除，也不能把未知结果自动重新执行。预热关闭，执行过不可信代码的容器永不回池。P3 完成后停止新增范围，等待 P4 批准。
+最后一条 Docker 查询使用 execution 标签检查所有策略版本，只查询、不删除容器。本轮结束时已确认无遗留执行容器；未来发现遗留应检查精确名称、执行 ID、租约与清理状态，由受限 Runner 对账。禁止全局批量删除，也不能把未知结果自动重新执行。预热关闭，执行过不可信代码的容器永不回池。P3 约束继续适用；P4 范围与验证见下一节。
+
+## 11 P4 工具与 Skill 操作
+
+用户已单独批准 P4。无需增加全局或项目依赖，复用现有 Python 环境。先启动已有 Docker Desktop，再在项目 PowerShell 中运行：
+
+```powershell
+./.venv/Scripts/python.exe scripts/bootstrap-p4.py
+./.venv/Scripts/python.exe scripts/migrate.py upgrade
+./.venv/Scripts/python.exe scripts/migrate.py check
+# 已运行的旧 API 需按项目归属安全停止，再启动以加载代码和新的 P4 凭据。
+./scripts/stop-local.ps1
+./scripts/start-local.ps1
+```
+
+bootstrap-p4 仅补充两个独立随机凭据，不覆盖已有配置，不打印值。`AGENTFORGE_MCP_SERVER_TOKEN` 是可信服务端内部凭据，不输入浏览器；`AGENTFORGE_CAPABILITY_APPROVER_TOKEN` 用于独立复核 P4 操作，管理员和 P3 审批 Token 均不能代替它。当前 .env 已补充，无需重新生成。前端密码输入仅保存在内存，离开页面/刷新后丢弃。
+
+1. 打开 `/mcp`，使用管理员 Token 授权页面。先为精确的工具名和资源 ID 保存授权（例如 notes.write / project-notes），默认没有任何资源权限。
+2. 选择工具和资源，准备调用。写入先进入 awaiting_approval；未经批准执行会收到 TOOL_APPROVAL_REQUIRED。独立 P4 审批者读取完整操作、核对哈希并批准后，管理员执行，页面显示真实数据库结果。
+3. 超时或连接丢失时查看 needs_reconciliation。点击“核对受控服务回执”只核对已提交结果，不重放调用。无回执仍未知，应保留账本，不换 key 假定可安全重试。
+4. 打开 `/skills`，提交严格 Manifest（页面提供示例），可以标记为 Agent 候选。登记后申请安装，独立批准得到 installed_disabled；再次申请启用并独立批准才成为 enabled。
+5. 启用版本可在同页发起工具调用，但仍须有相应工具/资源授权；写工具仍需单次高风险审批。停用/撤销立即阻止新调用。升级另建版本；依赖需精确 version/content_hash，依赖停用再启用后父版本也要重新审批启用。
+
+P4 的安装只安装本地声明式清单，不联网下载包、不运行 hook、不执行说明文字。任意代码仍通过 P3 受限沙箱。完整 HTTP 契约和时序见 P4_CONTRACT。
+
+```powershell
+# 准备和更新可信 Runner，仅操作本项目；复用已批准的固定 Python 沙箱镜像。
+docker compose --profile sandbox build runner
+docker compose --profile sandbox up -d --no-deps --no-build runner
+# 包括真实 MCP、数据库、原 P2 和 P3 安全回归；专用故障 Runner 在 finally 中清理。
+./scripts/test-p4.ps1
+$env:AGENTFORGE_RUN_INTEGRATION='1'
+$env:AGENTFORGE_RUN_SANDBOX='1'
+Push-Location frontend
+npm run build
+npm run test:e2e
+Pop-Location
+./.venv/Scripts/python.exe scripts/check_secrets.py
+git status --short
+git diff --check
+git diff
+git ls-files --others --exclude-standard
+```
+
+测试报告位于 work/p4-all.xml、work/p4-e2e.json，前端截图为 work/p4-mcp.png、work/p4-skills.png。缺失 opt-in 产生的 skip 不算验收通过。敏感信息检查覆盖当前已跟踪和新增未跟踪源码、前端产物、项目日志及测试报告，不依赖 git add。测试需要访问本机数据库、Docker 管道和无头浏览器；沙箱拒绝时按工具权限流程申请具体测试，不改 Git 或系统权限。
+
+本轮不操作 git add/commit，不改 .git 权限；完成后由用户在 CMD 手动提交。不进入 P5。

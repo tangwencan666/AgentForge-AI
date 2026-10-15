@@ -11,7 +11,7 @@ def test_liveness_does_not_claim_dependencies_up(settings):
     with TestClient(create_app(settings, connections)) as client:
         response = client.get("/health/live")
         assert response.status_code == 200
-        assert response.json()["data"] == {"status": "alive", "phase": "P3"}
+        assert response.json()["data"] == {"status": "alive", "phase": "P4"}
         assert response.json()["request_id"] == response.headers["X-Request-ID"]
     assert connections.closed
 

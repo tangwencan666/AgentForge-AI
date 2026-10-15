@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from app.api.v1.routes import router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.sandbox import router as sandbox_router
+from app.api.v1.capabilities import router as capabilities_router
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.core.logging import configure_logging
@@ -34,7 +35,7 @@ def create_app(settings: Settings | None = None, connections=None) -> FastAPI:
 
     app = FastAPI(title="AgentForge AI", version="0.1.0", lifespan=lifespan,
                   responses={code: {"model": ApiResponse} for code in (400, 401, 403, 409, 422, 500, 503)},
-                  description="P3 durable workflows and approved Docker sandbox. Model responses are explicitly Mock; MCP/Skills remain unavailable.")
+                  description="P4 controlled MCP Tool Gateway and declarative Skills Registry; approved Docker sandbox. Model responses remain explicitly Mock.")
     app.state.settings = settings
     app.add_middleware(RequestContextMiddleware)
 
@@ -68,7 +69,7 @@ def create_app(settings: Settings | None = None, connections=None) -> FastAPI:
 
     @app.get("/health/live", response_model=ApiResponse, tags=["Health"])
     async def live():
-        return envelope({"status": "alive", "phase": "P3"})
+        return envelope({"status": "alive", "phase": "P4"})
 
     @app.get("/health/ready", response_model=ApiResponse, tags=["Health"])
     async def ready(request: Request):
@@ -81,4 +82,5 @@ def create_app(settings: Settings | None = None, connections=None) -> FastAPI:
     app.include_router(router)
     app.include_router(tasks_router)
     app.include_router(sandbox_router)
+    app.include_router(capabilities_router)
     return app

@@ -1,6 +1,6 @@
-# AgentForge AI P3 源码学习路径
+# AgentForge AI P4 源码学习路径
 
-下面路径均位于 `D:\AIProjects\AgentForge-AI`。先理解 P1 健康请求，再跟随 P2 的任务事务、独立 Worker、LangGraph 和 SSE，最后阅读已授权 P3 的可信 Runner 与受限容器。模型回答保持明确 Mock；沙箱 Python 为真实 Docker 执行，其实际验收状态以 P3_REPORT 为准。
+下面路径均位于 `D:\AIProjects\AgentForge-AI`。先理解 P1 健康请求，再跟随 P2 的任务事务、独立 Worker、LangGraph 和 SSE，再阅读 P3 的可信 Runner 与受限容器，最后跟随已授权 P4 的 MCP Gateway 与 Skill 生命周期。模型回答保持明确 Mock；沙箱 Python 为真实 Docker 执行，其实际验收状态以 P3_REPORT 为准。
 
 ## 1 从运行入口开始
 
@@ -38,7 +38,7 @@ backend/app/core/security.py 的 `require_admin` 进行固定时间 Token 比较
 
 backend/app/core/logging.py 的 `JsonFormatter` 采用事件和字段白名单，不序列化动态异常消息、request body、Authorization 或连接字符串；Uvicorn access log 关闭。main.py 的异常处理器只返回安全类型和字段名，不返回 Pydantic input 和 ctx。
 
-scripts/bootstrap_local.py 只生成开发服务秘密，拒绝覆盖；scripts/check_secrets.py 检查暂存区与前端构建产物中的已知秘密。观察 .gitignore 对 .env、work、日志和依赖目录的忽略。保护秘密需要入口、出口、日志和 Git 一起约束，不能仅靠页面遮挡。
+scripts/bootstrap_local.py 只生成开发服务秘密，拒绝覆盖；scripts/check_secrets.py 检查当前已跟踪/未跟踪源码、前端产物、日志和测试报告中的已知秘密。观察 .gitignore 对 .env、work、日志和依赖目录的忽略。保护秘密需要入口、出口、日志和 Git 一起约束，不能仅靠页面遮挡。
 
 ## 6 用测试理解行为
 
@@ -50,7 +50,7 @@ scripts/bootstrap_local.py 只生成开发服务秘密，拒绝覆盖；scripts/
 
 先掌握 Python async/await、FastAPI 依赖注入、Pydantic v2、SQLAlchemy 事务、Alembic、React hooks 与 TypeScript，再阅读 P0 中 LangGraph、检查点、outbox、租约和审批设计。backend/app/services/scheduling.py 仍是 `SchedulerPort` 协议；实际 PostgreSQL Outbox + Redis Streams 调度在 P2 Worker 中，不应因该端口文件没有实现就认为没有任务队列。
 
-P2 已实现，继续按下列顺序阅读；P3 已获开发授权，但所有不可信代码都必须通过受限服务端审批与 Docker 执行。不要在 Windows 宿主机直接运行代码，也不要自行接通真实模型、MCP、Skills 或进入 P4。
+P2 已实现，继续按下列顺序阅读；P3 已获开发授权，但所有不可信代码都必须通过受限服务端审批与 Docker 执行。不可信代码不得在 Windows 宿主机执行；MCP/Skills 仅通过本轮已批准的 P4 控制面使用。真实模型和 P5 尚未授权。
 
 ## 8 跟随 P2 任务
 
@@ -92,3 +92,27 @@ orchestration/checkpoints.py 的 PostgresTaskSaver 实现 LangGraph 异步保存
 `scripts/test-p3.ps1` 负责测试时暂停本项目后台 Worker并恢复，显式启用真实集成与沙箱 opt-in。`frontend/tests/sandbox.spec.ts` 使用真实后端批准/拒绝流程；AGENTFORGE_RUN_SANDBOX 未置 1 时会 skip，skip 不是验收通过。测试不写密码到 trace；最终数量及实际运行证据见 P3_REPORT。
 
 完成测试后学习 `reconcile()` 的 ownership、标签、固定命名与租约检查：只可清理自己的容器，不能使用 Docker 全局 prune。默认预热关闭，运行过不可信代码的容器不回池；Docker 不可用没有宿主机执行回退。Docker Desktop 的 Linux VM 结果不能证明 Windows/VM 逃逸、生产身份或 AppArmor/SELinux 全部安全，相关残余风险需保留。
+
+## 11 跟随 P4 的真实 MCP 调用
+
+先读 P4_CONTRACT，再依次阅读：
+
+1. `schemas/tools.py`：固定工具名、严格输入/输出 Schema、slug 资源、版本与 manifest。先尝试把 resource 改为路径或添加 approved，理解为什么客户端声明不能变成能力。
+2. `domain/tools.py` 和迁移 `0005_capabilities_capabilities.py`：区分 ToolPermission、ToolCall、CapabilityApproval、CapabilityAudit、SkillVersion 和 ManagedNote。回执是业务事实，不是 JSON-RPC 回应的别名。
+3. `services/tool_gateway.py`：create 只准备，execute 在事务中重新鉴权、扣额度并保存派发意图和审计，提交后才启动 MCP。比较成功重复请求、dispatched 和 needs_reconciliation 三种恢复路径。
+4. `services/capabilities.py`：操作哈希、租户串行锁、完整依赖闭包、权限 generation 和独立审批。这些检查由可信 Server 在副作用事务中重复执行。
+5. `mcp/client.py`：固定命令、最小环境、MCP 生命周期、目录 Schema 比对、短期 HMAC 能力、64 KiB 帧和总超时。它不接收模型给定的 endpoint 或启动命令。
+6. `mcp/server.py`：在同一数据库事务中重验能力和权限、写 notes、消费批准、保存回执及审计。然后模拟丢失响应，观察为何 Gateway 只能核对回执而不能重新写一次。
+7. `api/v1/capabilities.py` 与前端 `pages/McpTools.tsx`：管理员和独立 P4 审批者分别做什么；复核内容从真实服务端获取，按钮或 Reviewer 文本都不能授权。
+
+## 12 理解 Skill 注册与生效的区别
+
+阅读 `services/skills.py` 的 candidate → register → install → enable。candidate 保存文字和 manifest，不执行内容；installed_disabled 只表示声明式安装验证完成，不代表可以用工具。每个安装、启用动作各自绑定人工批准。
+
+再读 `enabled_skill()`：Skill 声明只能缩小权限，不能替代资源授权；检查根版本及传递依赖已启用并核对 generation。依赖停用后再启用，其内容虽未变化，生命周期已变化，父版本必须重新审批。升级创建新版本，不继承旧批准。
+
+前端依次读 `api/capabilities.ts`、`components/CapabilityApproval.tsx`、`components/ToolComposer.tsx` 和 `pages/SkillsCenter.tsx`。特别观察 DTO 只发送必要的 Skill 身份字段，复核 Token 不进浏览器持久存储，切换身份会丢弃受保护状态。
+
+最后读 `tests/unit/test_mcp_policy.py`、`tests/http/test_capabilities_api.py`、`tests/integration/test_capabilities.py` 和 `frontend/tests/capabilities.spec.ts`：分别验证 Schema/签名、角色边界、真实数据库/子进程与真实浏览器。传输丢失和审计故障使用显式故障注入，不能把它们当成独立远程服务器验收；正常读写链路确实启动项目 MCP Server。
+
+运行 `scripts/test-p4.ps1` 会同时执行 P3 Docker 安全回归。最终数量、修复与限制见 P4_REPORT。完成 P4 后停在本阶段，不继续 P5。

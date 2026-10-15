@@ -21,7 +21,7 @@ test('all ten pages are reachable and unimplemented pages are explicit', async (
     await page.getByRole('link', { name, exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`${route === '/' ? '/$' : route + '$'}`));
     await expect(page.getByRole('heading', { name, exact: true, level: 1 })).toBeVisible();
-    if (!['Dashboard', 'Settings', 'Model Center', 'Agent Tasks', 'Approval Center', 'Sandbox Center'].includes(name)) await expect(page.getByText('功能开发中', { exact: true })).toBeVisible();
+    if (!['Dashboard', 'Settings', 'Model Center', 'Agent Tasks', 'Approval Center', 'Sandbox Center', 'MCP Tools', 'Skills Center'].includes(name)) await expect(page.getByText('功能开发中', { exact: true })).toBeVisible();
   }
 });
 

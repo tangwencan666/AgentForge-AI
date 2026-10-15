@@ -14,7 +14,8 @@ def content_hash(value) -> str:
 
 def redact(text: str, settings: Settings) -> str:
     connection_passwords = [unquote(urlsplit(url.get_secret_value()).password or "") for url in (settings.database_url, settings.redis_url)]
-    sandbox_secrets = [v.get_secret_value() for v in (settings.sandbox_runner_token,settings.sandbox_approver_token) if v]
+    sandbox_secrets = [v.get_secret_value() for v in (settings.sandbox_runner_token,settings.sandbox_approver_token,
+                                                    settings.mcp_server_token,settings.capability_approver_token) if v]
     for secret in [settings.admin_token.get_secret_value(), settings.database_url.get_secret_value(), settings.redis_url.get_secret_value()] + sandbox_secrets + connection_passwords + [
         value for key, value in os.environ.items() if key.startswith("AGENTFORGE_MODEL_") and value
     ]:

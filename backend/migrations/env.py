@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from app.domain.entities import Base
 import app.domain.tasks  # P2 metadata
 import app.domain.sandbox  # P3 metadata
+import app.domain.tools  # P4 metadata
 
 target_metadata = Base.metadata
 
@@ -19,7 +20,7 @@ def configure(connection):
 async def migrate_online():
     settings = get_settings()
     engine = create_async_engine(settings.database_url.get_secret_value(), poolclass=pool.NullPool,
-                                 echo=False, hide_parameters=True)
+                                 echo=False, hide_parameters=True, connect_args={"timeout": 5})
     try:
         async with engine.connect() as connection:
             await connection.run_sync(configure)

@@ -1,8 +1,8 @@
-# AgentForge AI P3 Docker Sandbox
+# AgentForge AI P4 MCP Tools 与 Skills Registry
 
 2026 年 10 月 15 日，Asia/Shanghai。项目根目录：`D:\AIProjects\AgentForge-AI`。
 
-本项目按已确认的 P0 基线完成 P1–P3。现有骨架包括 FastAPI/React、四模型配置、真实 PostgreSQL/Redis、LangGraph 异步协作、审批、取消、预算预留和 SSE。P3 已实现并实际验收独立可信 Runner、受限 Docker Python 执行和真实 Sandbox Center。模型回答与模型费用仍为明确 Mock，未接通真实模型、MCP 或 Skills。
+本项目按已确认的 P0 基线实现 P1–P4。现有骨架包括 FastAPI/React、四模型配置、真实 PostgreSQL/Redis、LangGraph 异步协作、审批、取消、预算预留和 SSE。P3 已实现并实际验收独立可信 Runner、受限 Docker Python 执行和真实 Sandbox Center。P4 增加真实受控 MCP stdio Client/Server、服务端 Tool Gateway 和声明式 Skills Registry。模型回答与模型费用仍为明确 Mock。
 
 ## 文档入口
 
@@ -13,6 +13,8 @@
 - [P2 工作流契约](docs/P2_CONTRACT.md)
 - [P2 完成报告](docs/P2_REPORT.md)
 - [P3 实施与验收报告](docs/P3_REPORT.md)
+- [P4 契约与安全边界](docs/P4_CONTRACT.md)
+- [P4 实施与验收报告](docs/P4_REPORT.md)
 - [沙箱安全边界](docs/SANDBOX_SECURITY.md)
 - [沙箱执行协议](docs/SANDBOX_EXECUTION_PROTOCOL.md)
 - [P1 执行范围](docs/P1_SCOPE.md)
@@ -24,7 +26,7 @@
 
 ## 核心决策
 
-采用 FastAPI、LangGraph、LangChain、React、PostgreSQL、Redis 和 SSE。四个独立模型槽位分别服务 Planner、Coder、Researcher、Reviewer。P2 Mock 工作流保持不变；P3 代码执行经过受限服务端 Runner，独立审批不能替代权限检查。MCP Tool Gateway 与 Skills 的真实执行仍待后续授权。
+采用 FastAPI、LangGraph、LangChain、React、PostgreSQL、Redis 和 SSE。四个独立模型槽位分别服务 Planner、Coder、Researcher、Reviewer。P2 Mock 工作流保持不变；P3 代码执行经过受限服务端 Runner，独立审批不能替代权限检查。P4 已获单独授权：固定目录笔记工具经过资源授权、严格 Schema、额度、幂等账本与独立审批；Skill 的安装和启用分别审批，停用、依赖变化或撤权阻止新调用。候选不自动下载或执行。
 
 不可信代码只在符合安全策略的 Docker Linux 容器内执行。Docker 不可用或关键隔离机制无法验证时 Fail Closed，禁止宿主机执行回退。预热默认关闭；未来预热只能单次租赁使用，执行后销毁，不复用执行过不可信代码的容器。
 
@@ -34,6 +36,8 @@ Docker 共享内核，存在逃逸及宿主机风险，不能视为绝对安全�
 
 ## 当前状态
 
-P3 已完成验收并暂停，等待 P4 单独授权。最终 Python 测试 153/153 通过（117 单元/HTTP、36 真实集成，其中沙箱 16 项），浏览器 8/8 通过，无失败或跳过。类型检查、前端构建、迁移、pip check 和实际 OS Worker 重启验证通过；阶段结束无任何策略版本的遗留执行容器。
+P4 编码和验收详情见 [P4_REPORT](docs/P4_REPORT.md)，最新状态见 [PROJECT_STATUS](docs/PROJECT_STATUS.md)。P0–P3 报告保留历史阶段事实。
 
-真实 PostgreSQL/Redis 健康，当前可信 Runner 可用。测试不能证明内核/VM 无逃逸，也未专门强杀 Runner OS 进程以覆盖全部崩溃窗口。完整证据、修复过程、残余风险和提交见 P3_REPORT 与 PROJECT_STATUS。P0/P1/P2 历史报告保留，不自动进入 P4。
+本地页面：MCP Tools `http://127.0.0.1:15173/mcp`；Skills Center `http://127.0.0.1:15173/skills`。先运行 `scripts/bootstrap-p4.py` 生成仅存项目 .env 的不同角色凭据，再升级到 `0005_capabilities` 并启动项目服务。完整命令见启动指南的 P4 章节。
+
+P4 仅支持固定可信 stdio MCP Server 与声明式工具 Skill，不含远程 HTTP/OAuth、任意包下载安装、真实模型调用或生产部署。普通 MCP 笔记调用不执行用户代码；可执行 Python 继续使用 P3 Docker 审批链路。本轮完成后暂停，不进入 P5。

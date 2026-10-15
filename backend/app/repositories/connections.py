@@ -6,7 +6,7 @@ from redis.asyncio import Redis
 from app.core.config import Settings
 
 logger = logging.getLogger("agentforge")
-MIGRATION_REVISION = "0004_sandbox"
+MIGRATION_REVISION = "0005_capabilities"
 
 
 class Connections:
@@ -34,6 +34,8 @@ class Connections:
             # Verify core table exists too, not only a forged revision string.
             await conn.execute(text("SELECT role FROM model_slots LIMIT 1"))
             await conn.execute(text("SELECT id FROM agent_tasks LIMIT 1"))
+            await conn.execute(text("SELECT id FROM tool_calls LIMIT 1"))
+            await conn.execute(text("SELECT skill_id FROM skill_versions LIMIT 1"))
             return "up"
 
     async def _redis_status(self) -> str:

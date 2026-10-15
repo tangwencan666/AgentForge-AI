@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     allowed_model_hosts: str = "api.openai.com,api.anthropic.com,generativelanguage.googleapis.com"
     sandbox_runner_token: SecretStr | None = Field(default=None, repr=False)
     sandbox_approver_token: SecretStr | None = Field(default=None, repr=False)
+    mcp_server_token: SecretStr | None = Field(default=None, repr=False)
+    capability_approver_token: SecretStr | None = Field(default=None, repr=False)
+    mcp_daily_call_limit: int = Field(default=1000, ge=1, le=100000)
+    mcp_timeout_seconds: float = Field(default=8, gt=0, le=8)
     sandbox_image_id: str | None = None
     sandbox_runner_url: str = "http://127.0.0.1:18120"
     sandbox_daily_cpu_seconds: Decimal = Field(default=Decimal("3600"), gt=0, le=86400)
@@ -80,7 +84,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def enforce_production_transport(self):
-        configured = [self.admin_token, self.sandbox_runner_token, self.sandbox_approver_token]
+        configured = [self.admin_token, self.sandbox_runner_token, self.sandbox_approver_token,
+                      self.mcp_server_token, self.capability_approver_token]
         values = [v.get_secret_value() for v in configured if v is not None]
         if any(len(v) < 32 for v in values) or len(values) != len(set(values)):
             raise ValueError("server roles require distinct protected credentials")
