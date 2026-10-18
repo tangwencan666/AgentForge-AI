@@ -8,6 +8,9 @@ import app.domain.tasks  # P2 metadata
 import app.domain.sandbox  # P3 metadata
 import app.domain.tools  # P4 metadata
 import app.domain.real  # P5 metadata
+import app.domain.permits  # P5-LIVE single-use execution metadata
+import app.domain.sandbox_ownership  # S3A private Runner ownership, no adoption
+import app.domain.sandbox_maintenance  # B1 persistent closed-by-default admission
 
 target_metadata = Base.metadata
 
@@ -29,7 +32,10 @@ async def migrate_online():
         await engine.dispose()
 
 
-if context.is_offline_mode():
+if context.config.attributes.get('connection') is not None:
+    # Trusted in-process migration/restore rehearsal; no URL or CLI override.
+    configure(context.config.attributes['connection'])
+elif context.is_offline_mode():
     context.configure(dialect_name="postgresql", target_metadata=target_metadata, literal_binds=True)
     with context.begin_transaction():
         context.run_migrations()
