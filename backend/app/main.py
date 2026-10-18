@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import logging
+import sys
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
@@ -10,6 +11,7 @@ from app.api.v1.tasks import router as tasks_router
 from app.api.v1.sandbox import router as sandbox_router
 from app.api.v1.capabilities import router as capabilities_router
 from app.api.v1.inference import router as inference_router
+from app.api.v1.permits import router as permits_router
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.core.logging import configure_logging
@@ -29,6 +31,13 @@ def create_app(settings: Settings | None = None, connections=None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.connections = connections or Connections(settings)
+        lifecycle = sys.modules.get("lifecycle_runtime")
+        if lifecycle is not None:
+            dependencies = await app.state.connections.readiness()
+            if not all(status == "up" for status in dependencies.values()):
+                await app.state.connections.close()
+                raise RuntimeError("LIFECYCLE_DEPENDENCIES_NOT_READY")
+            lifecycle.ready("backend")
         logger.info("application_started")
         yield
         await app.state.connections.close()
@@ -85,4 +94,5 @@ def create_app(settings: Settings | None = None, connections=None) -> FastAPI:
     app.include_router(sandbox_router)
     app.include_router(capabilities_router)
     app.include_router(inference_router)
+    app.include_router(permits_router)
     return app

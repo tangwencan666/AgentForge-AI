@@ -6,9 +6,9 @@ import '../capabilities.css';
 import '../models.css';
 
 type Slot = { role: string; provider: string | null; base_url: string | null; model: string | null; credential_reference: string | null;
-  temperature: number; max_tokens: number; timeout: number; enabled: boolean; priority: number; version: number; credential_configured: boolean; call_status: string };
+  temperature: number; max_tokens: number; timeout: number; enabled: boolean; priority: number; thinking_mode: 'disabled' | 'enabled'; reasoning_effort: 'low' | 'high' | 'max'; version: number; credential_configured: boolean; call_status: string };
 const roles = ['planner', 'coder', 'researcher', 'reviewer'];
-type Policy = { real_calls_enabled: boolean; daily_budget_usd: string; test_budget_usd: string; test_max_calls: number; paid_test_status: string };
+type Policy = { real_calls_enabled: boolean; external_calls_blocked?: boolean; daily_budget_usd: string; test_budget_usd: string; test_max_calls: number; paid_test_status: string };
 type Metric = { role: string; provider: string; model: string; is_mock: boolean; requests: number; success_rate: number;
   timeout_rate: number; error_rate: number; input_tokens_reported: number; output_tokens_reported: number;
   total_tokens_reported: number; usage_unknown: number; estimated_cost_usd: string; pending_upper_bound_usd: string;
@@ -20,23 +20,29 @@ function SlotForm({ initial, saved }: { initial: Slot; saved: () => Promise<void
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [testId, setTestId] = useState('');
+  const deepseekProfile = slot.provider === 'deepseek' || (slot.provider === 'openai_compatible' && /^https:\/\/api\.deepseek\.com(?::443)?(?:\/v1)?\/?$/.test(slot.base_url || ''));
   async function save() {
     setBusy(true); setError('');
-    const { provider, base_url, model, credential_reference, temperature, max_tokens, timeout, enabled, priority } = slot;
+    const { provider, base_url, model, credential_reference, temperature, max_tokens, timeout, enabled, priority, thinking_mode, reasoning_effort } = slot;
     try {
       await taskRequest(`/model-slots/${slot.role}`, token, { method: 'PUT', body: JSON.stringify({ provider,
         base_url: provider === 'mock' ? null : base_url || null, model, credential_reference: provider === 'mock' ? null : credential_reference || null,
-        temperature, max_tokens, timeout, enabled, priority, expected_version: initial.version }) }); await saved();
+        temperature, max_tokens, timeout, enabled, priority, thinking_mode, reasoning_effort, expected_version: initial.version }) }); await saved();
     } catch (e) { setError(e instanceof Error ? e.message : 'SAVE_FAILED'); } finally { setBusy(false); }
   }
   return <section className="panel"><h2>{slot.role[0].toUpperCase() + slot.role.slice(1)}</h2>
     <p>{initial.call_status} · {initial.credential_configured ? '凭据引用已配置' : '未配置真实凭据'} · version {initial.version}</p>
     <form className="p4-form" onSubmit={e => { e.preventDefault(); void save(); }}>
-      <label>provider<select aria-label={`${slot.role} provider`} value={slot.provider || 'mock'} onChange={e => setSlot({ ...slot, provider: e.target.value })}><option>mock</option><option>openai_compatible</option><option disabled>anthropic</option><option disabled>google</option><option disabled>azure_openai</option></select></label>
+      <label>provider<select aria-label={`${slot.role} provider`} value={slot.provider || 'mock'} onChange={e => setSlot({ ...slot, provider: e.target.value, thinking_mode: 'disabled', reasoning_effort: 'high' })}><option>mock</option><option>deepseek</option><option>openai_compatible</option><option disabled>anthropic</option><option disabled>google</option><option disabled>azure_openai</option></select></label>
       <label>base_url<input aria-label={`${slot.role} base_url`} value={slot.base_url || ''} onChange={e => setSlot({ ...slot, base_url: e.target.value })} placeholder="https://approved-host/v1" /></label>
       <label>model<input aria-label={`${slot.role} model`} required value={slot.model || ''} onChange={e => setSlot({ ...slot, model: e.target.value })} /></label>
       <label>credential_reference<input aria-label={`${slot.role} credential_reference`} value={slot.credential_reference || ''} onChange={e => setSlot({ ...slot, credential_reference: e.target.value })} placeholder={`env:AGENTFORGE_MODEL_${slot.role.toUpperCase()}_KEY`} /></label>
       <p className="muted">这里只接受服务端环境变量引用。实际 Key 请在本机受保护环境中设置，无需粘贴到页面或聊天。</p>
+      {deepseekProfile && <>
+        <label>思考模式<select aria-label={`${slot.role} thinking_mode`} value={slot.thinking_mode} onChange={e => setSlot({ ...slot, thinking_mode: e.target.value as Slot['thinking_mode'] })}><option value="disabled">关闭（首次连接测试）</option><option value="enabled">开启</option></select></label>
+        <label>推理强度<select aria-label={`${slot.role} reasoning_effort`} disabled={slot.thinking_mode === 'disabled'} value={slot.reasoning_effort} onChange={e => setSlot({ ...slot, reasoning_effort: e.target.value as Slot['reasoning_effort'] })}><option>low</option><option>high</option><option>max</option></select></label>
+        <p className="muted">思考模式下不发送 temperature；不展示或保存思考正文。模式和强度只在保存后生效。</p>
+      </>}
       {(['temperature', 'max_tokens', 'timeout', 'priority'] as const).map(field => <label key={field}>{field}<input aria-label={`${slot.role} ${field}`} type="number" step={field === 'temperature' ? '.1' : '1'} value={slot[field]} onChange={e => setSlot({ ...slot, [field]: Number(e.target.value) })} /></label>)}
       <label className="checkbox"><input type="checkbox" checked={slot.enabled} onChange={e => setSlot({ ...slot, enabled: e.target.checked })} />enabled</label>
       <button disabled={busy}>保存 {slot.role}</button>
@@ -63,7 +69,9 @@ export default function ModelCenter() {
     {!token && <div className="model-grid">{roles.map(role => <section className="panel" key={role}><h2>{role[0].toUpperCase() + role.slice(1)}</h2><p>未读取</p></section>)}</div>}
     {token && <><section className="panel"><h2>真实 API 状态与测试额度</h2><div data-testid="model-policy">{policy ? <>
       <p>真实调用：<strong>{policy.real_calls_enabled ? '服务端已开放' : '服务端未开放'}</strong> · 收费连接测试：<strong>{policy.paid_test_status}</strong></p>
+      {policy.external_calls_blocked && <p>维护窗口：外部模型请求已阻断。专用连接测试不自动重试。</p>}
       <p>每日费用上限 ${policy.daily_budget_usd} · 当日测试额度 ${policy.test_budget_usd} · 当日测试最多 {policy.test_max_calls} 次调用</p>
+      <p>真实执行必须持有服务端签发的一次性 Permit。普通 Chat 和下方旧连接测试按钮不能取得或共享专用测试授权。</p>
       <p className="muted">状态、凭据、端点、价格及剩余额度均通过服务端检查后才能调用。未配置时可明确选择 Mock。</p>
     </> : <p>读取中…</p>}</div><button onClick={() => { void refresh().catch(() => setError('REFRESH_FAILED')); }}>刷新模型状态</button></section>
       <div className="model-grid">{slots.map(slot => <SlotForm key={slot.role + slot.version} initial={slot} saved={refresh} />)}</div>

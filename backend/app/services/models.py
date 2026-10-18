@@ -33,9 +33,15 @@ def slot_dto(slot: ModelSlot) -> dict:
 
 def credential_configured(ref):
     from dotenv import dotenv_values
-    from app.core.config import ROOT
+    from app.core.config import runtime_env_file
     name = (ref or '').removeprefix('env:')
-    return bool(ref and (os.environ.get(name) or dotenv_values(ROOT / '.env').get(name)))
+    if not ref:
+        return False
+    if name in os.environ:
+        return True  # Presence only; do not read or authenticate the value.
+    if os.environ.get('AGENTFORGE_MODEL_CREDENTIALS_ENV_ONLY', 'true').lower() in {'1', 'true'}:
+        return False
+    return name in dotenv_values(runtime_env_file())
 
 
 async def list_slots(session, tenant_id: str) -> list[dict]:

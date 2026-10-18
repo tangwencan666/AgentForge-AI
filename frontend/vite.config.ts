@@ -2,11 +2,14 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, path.resolve('..'), '');
+export default defineConfig(({ mode, command }) => {
+  // Production bundles need no server dotenv; do not read model credentials during builds.
+  const envDirectory = process.env.AGENTFORGE_SETTINGS_FILE ? path.dirname(process.env.AGENTFORGE_SETTINGS_FILE) : path.resolve('..');
+  const env = command === 'build' ? {} : loadEnv(mode, envDirectory, '');
   // Read only non-secret ports; never define or expose backend environment variables.
   const backend = `http://127.0.0.1:${env.BACKEND_PORT || '18100'}`;
   return {
+    envDir: false,
     plugins: [react()],
     server: {
       host: '127.0.0.1', port: Number(env.FRONTEND_PORT || 15173), strictPort: true,

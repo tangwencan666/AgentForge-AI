@@ -14,6 +14,10 @@ from app.core.errors import AppError
 from app.sandbox.driver import DockerDriver
 from app.sandbox.policy import (TERMINAL, OWNER_LABEL, EXECUTION_LABEL, SUMMARY_LIMIT, PolicyViolation, validate_execution, assert_runner_lease)
 from app.schemas.sandbox import POLICY_VERSION
+from app.domain.sandbox_ownership import SandboxOwnership
+from app.sandbox.ownership import OwnershipCoordinator, ThreadAuthority, labels as ownership_labels
+from app.services.sandbox_maintenance import require_open
+from app.sandbox.history import require_replayable
 
 
 class SandboxRunner:
@@ -26,8 +30,15 @@ class SandboxRunner:
         self.blocked = True
         self.closing = False
         self.reconciler = None
+        self.ownership = OwnershipCoordinator(connections, settings, self.owner)
 
     async def start(self):
+        try:
+            await self.ownership.claim()
+            self.driver.authority = ThreadAuthority(self.ownership, asyncio.get_running_loop())
+        except Exception:
+            self.blocked = True
+            return  # No registration/clearance: no Docker discovery or mutation.
         await self.reconcile()
         self.reconciler = asyncio.create_task(self._reconcile_loop())
 
@@ -40,6 +51,11 @@ class SandboxRunner:
             await asyncio.gather(self.reconciler, return_exceptions=True)
         if self.active:
             await asyncio.gather(*list(self.active.values()), return_exceptions=True)
+        if self.ownership.scope is not None:
+            try:
+                await self.ownership.release()
+            except Exception:
+                self.blocked = True
 
     async def _reconcile_loop(self):
         while not self.closing:
@@ -47,8 +63,9 @@ class SandboxRunner:
             await self.reconcile()
 
     async def reconcile(self):
-        """Only our exact name+policy+execution label is eligible for force cleanup."""
+        """Discover by scope, authorize against durable exact ownership before IO."""
         try:
+            await self.ownership.refresh()
             await asyncio.to_thread(self.driver.health)
             containers = await asyncio.to_thread(self.driver.owned)
             clean = True
@@ -58,21 +75,35 @@ class SandboxRunner:
                     execution_id = UUID(labels.get(EXECUTION_LABEL, ""))
                 except (ValueError, TypeError):
                     clean = False
+                    await self.ownership.refuse_resource(None, container.id)
                     continue
                 if container.name != "agentforge-p3-exec-" + execution_id.hex or labels.get(OWNER_LABEL) != POLICY_VERSION:
                     clean = False  # Do not delete containers failing ownership checks.
+                    await self.ownership.refuse_resource(execution_id, container.id)
                     continue
                 if execution_id in self.active:
                     continue
                 async with self.connections.sessions() as session:
                     row = await session.get(SandboxExecution, execution_id)
+                    record = await session.get(SandboxOwnership, execution_id)
                     live = row and row.runner_lease_until and row.runner_lease_until > now() and row.status not in TERMINAL
+                if (not row or not record or not self.ownership.matches(record)
+                        or record.container_id != container.id
+                        or any(labels.get(key) != value for key, value in ownership_labels(record).items())):
+                    clean = False
+                    await self.ownership.refuse_resource(execution_id, container.id)
+                    continue  # Missing/forged/foreign records NEVER grant cleanup.
                 if live:
                     continue  # Another trusted runner owns the live lease.
                 removed = await asyncio.to_thread(self.driver.remove, container)
                 clean = clean and removed
             async with self.connections.sessions() as session:
-                stale = list((await session.scalars(select(SandboxExecution).where(
+                stale = list((await session.scalars(select(SandboxExecution).join(SandboxOwnership,
+                    SandboxOwnership.execution_id == SandboxExecution.id).where(
+                    SandboxOwnership.runner_instance_id == self.ownership.scope.runner_instance_id,
+                    SandboxOwnership.runner_generation == self.ownership.scope.runner_generation,
+                    SandboxOwnership.project_id == self.ownership.scope.project_id,
+                    SandboxOwnership.sandbox_namespace == self.ownership.scope.sandbox_namespace,
                     SandboxExecution.launch_claimed_at.is_not(None),
                     (SandboxExecution.status.not_in(TERMINAL) | (SandboxExecution.cleanup_status == "unconfirmed")),
                     (SandboxExecution.runner_lease_until.is_(None) | (SandboxExecution.runner_lease_until <= now()))))).all())
@@ -90,17 +121,25 @@ class SandboxRunner:
     async def _mark_uncertain(self, execution_id):
         async with self.connections.sessions() as session:
             snapshot = await session.get(SandboxExecution, execution_id)
-            if snapshot is None:
+            ownership = await session.get(SandboxOwnership, execution_id)
+            if snapshot is None or not ownership or not self.ownership.matches(ownership):
+                self.blocked = True
                 return
             task_id = snapshot.task_id
+        absent = await self._absence(execution_id)
         async with self.connections.sessions() as session, session.begin():
             task = await locked_task(session, task_id)
+            await self.ownership._identity(session)
             row = await session.get(SandboxExecution, execution_id, with_for_update=True)
+            ownership = await session.get(SandboxOwnership, execution_id)
+            if not ownership or not self.ownership.matches(ownership):
+                self.blocked = True
+                return
             if not row or (row.status in TERMINAL and row.cleanup_status != "unconfirmed") or (row.runner_lease_until and row.runner_lease_until > now()):
                 return
             row.status = "needs_reconciliation"
             row.failure_reason = row.failure_reason or "RUNNER_RESTART_AFTER_LAUNCH_INTENT"
-            row.cleanup_status = "removed" if await self._absence(execution_id) else "unconfirmed"
+            row.cleanup_status = "removed" if absent else "unconfirmed"
             row.finished_at, row.runner_lease_until = now(), None
             from app.services.sandbox import settle_budget
             if row.cleanup_status == "removed":
@@ -109,14 +148,13 @@ class SandboxRunner:
                 "cleanup_status": row.cleanup_status, "failure_reason": row.failure_reason})
 
     async def _absence(self, execution_id):
-        from docker.errors import NotFound
         try:
-            container = await asyncio.to_thread(self.driver.client().containers.get, "agentforge-p3-exec-" + execution_id.hex)
-            if container.labels.get(EXECUTION_LABEL) != str(execution_id) or container.labels.get(OWNER_LABEL) != POLICY_VERSION:
-                return False
-            return await asyncio.to_thread(self.driver.remove, container)
-        except NotFound:
-            return True
+            async with self.connections.sessions() as session:
+                record = await session.get(SandboxOwnership, execution_id)
+                if not record or not self.ownership.matches(record):
+                    return False
+                container_id = record.container_id
+            return await asyncio.to_thread(self.driver.absence, execution_id, container_id)
         except Exception:
             return False
 
@@ -129,8 +167,10 @@ class SandboxRunner:
             row = await session.get(SandboxExecution, request.execution_id, with_for_update=True)
             if row is None or row.task_id != task.id:
                 raise AppError("EXECUTION_NOT_FOUND", "Sandbox execution not found", 404)
+            await require_replayable(session, row)
             if row.launch_claimed_at is not None or row.status in TERMINAL:
                 return {"execution_id": str(row.id), "status": row.status}
+            await require_open(session)
             check_lease(task, request.owner, request.fence)
             approval = await session.get(TaskApproval, row.approval_reference)
             try:
@@ -159,6 +199,10 @@ class SandboxRunner:
             usage = await session.get(SandboxDailyUsage, (row.tenant_id, row.budget_day), with_for_update=True)
             if not usage or usage.cpu_seconds_reserved + usage.cpu_seconds_used > self.settings.sandbox_daily_cpu_seconds:
                 raise AppError("SANDBOX_BUDGET", "Sandbox tenant daily quota reached", 409)
+            # Both ownership and launch intent commit in this transaction.
+            # Issue BEFORE marking launched: an already-launched unowned row
+            # is historical quarantine, never an invitation to adopt it.
+            await self.ownership.issue(session, row)
             row.launch_claimed_at, row.runner_owner = now(), self.owner
             row.runner_lease_until = now() + timedelta(seconds=15)
             row.container_name, row.image_id = "agentforge-p3-exec-" + row.id.hex, self.settings.sandbox_image_id
@@ -184,6 +228,7 @@ class SandboxRunner:
     async def _authorize_boundary(self, request, container_id=None, started=False):
         async with self.connections.sessions() as session, session.begin():
             task = await locked_task(session, request.task_id)
+            await self.ownership._identity(session)
             row = await session.get(SandboxExecution, request.execution_id, with_for_update=True)
             assert_runner_lease(row, self.owner, now())
             if not started:
@@ -193,6 +238,8 @@ class SandboxRunner:
                     from app.services.agent_tools import authorize_parent
                     await authorize_parent(session, row.tenant_id, row.parent_context, sandbox=True)
             if container_id:
+                if row.container_id and row.container_id != container_id:
+                    raise PolicyViolation('SANDBOX_CONTAINER_ID_MISMATCH')
                 row.container_id = container_id
             if started:
                 row.status, row.started_at = "running", now()
@@ -202,6 +249,10 @@ class SandboxRunner:
     async def _monitor(self, request):
         async with self.connections.sessions() as session, session.begin():
             task = await locked_task(session, request.task_id)
+            try:
+                await self.ownership._identity(session)
+            except PolicyViolation:
+                return 'RUNNER_OWNERSHIP_LOST'
             row = await session.get(SandboxExecution, request.execution_id, with_for_update=True)
             try:
                 assert_runner_lease(row, self.owner, now())
@@ -270,6 +321,11 @@ class SandboxRunner:
             asyncio.to_thread(summary, result.stdout), asyncio.to_thread(summary, result.stderr))
         async with self.connections.sessions() as session, session.begin():
             task = await locked_task(session, request.task_id)
+            try:
+                await self.ownership._identity(session)
+            except PolicyViolation:
+                self.blocked = True
+                return
             row = await session.get(SandboxExecution, request.execution_id, with_for_update=True)
             if row.runner_owner != self.owner or row.status in TERMINAL:
                 self.blocked = self.blocked or row.cleanup_status == "unconfirmed"

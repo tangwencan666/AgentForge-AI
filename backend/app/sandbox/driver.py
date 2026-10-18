@@ -38,15 +38,45 @@ class DriverResult:
 
 
 class DockerDriver:
-    def __init__(self, image_id, client=None):
+    def __init__(self, image_id, client=None, *, authority=None):
         self.image_id = image_id
         self._client = client
+        self.authority = authority
+
+    def _authority(self):
+        if self.authority is None:
+            raise PolicyViolation('SANDBOX_OWNERSHIP_REQUIRED')
+        if self.client().info().get('ID') != self.authority.scope.daemon_id:
+            self.authority.refuse(None)
+            raise PolicyViolation('SANDBOX_DAEMON_IDENTITY_MISMATCH')
+        return self.authority
+
+    def _before(self, action, execution_id=None, container=None, *, operation_hash=None):
+        authority = self._authority()
+        attrs = None
+        if container is not None:
+            attrs = container.attrs
+            if attrs.get('Id') != container.id:
+                raise PolicyViolation('SANDBOX_CONTAINER_ID_MISMATCH')
+            try:
+                parsed = UUID((attrs.get('Config', {}).get('Labels') or {}).get(EXECUTION_LABEL, ''))
+            except (ValueError, TypeError, AttributeError):
+                authority.refuse(container.id)
+                raise PolicyViolation('SANDBOX_OWNERSHIP_UNVERIFIED') from None
+            if execution_id is not None and parsed != execution_id:
+                raise PolicyViolation('SANDBOX_OWNERSHIP_UNVERIFIED')
+            execution_id = parsed
+        return authority.before(action, execution_id, attrs, operation_hash=operation_hash)
 
     def client(self):
         if self._client is None:
             import docker
             self._client = docker.from_env(timeout=5)
         return self._client
+
+    def dispatch_window(self):
+        # Missing/forged authority cannot supply a production dispatch window.
+        return self._authority().window()
 
     def health(self):
         from app.sandbox.policy import validate_image
@@ -62,13 +92,14 @@ class DockerDriver:
         return True
 
     def owned(self):
-        return self.client().containers.list(all=True, filters={"label": OWNER_LABEL + "=" + POLICY_VERSION})
+        authority = self._authority()
+        return self.client().containers.list(all=True, filters={'label': authority.scope.filters()})
 
-    @staticmethod
-    def stop_container(container):
+    def stop_container(self, container):
         """A natural exit between inspect and kill is safe only after reinspection."""
         from docker.errors import APIError
         container.reload()
+        self._before('stop', container=container)
         if container.attrs.get("State", {}).get("Running"):
             try:
                 container.kill()
@@ -84,22 +115,32 @@ class DockerDriver:
         from docker.errors import NotFound
         try:
             container.reload()
-            labels = container.attrs.get("Config", {}).get("Labels", {}) or {}
-            try:
-                execution_id = UUID(labels.get(EXECUTION_LABEL, ""))
-            except (ValueError, TypeError):
-                raise PolicyViolation("CONTAINER_OWNERSHIP_UNVERIFIED") from None
-            if labels.get(OWNER_LABEL) != POLICY_VERSION or container.name != "agentforge-p3-exec-" + execution_id.hex:
-                raise PolicyViolation("CONTAINER_OWNERSHIP_UNVERIFIED")
             self.stop_container(container)
+            self._before('remove', container=container)
             container.remove(force=True, v=True)
         except NotFound:
             pass
         try:
             self.client().containers.get(container.id)
         except NotFound:
+            self._before('removed', container=container)
             return True
         return False
+
+    def absence(self, execution_id, container_id):
+        """Only a durable immutable ID may be inspected. Never fall back to name."""
+        from docker.errors import NotFound
+        from app.sandbox.ownership import ID
+        if not container_id or not ID.fullmatch(container_id):
+            return False
+        authority = self._authority()
+        authority.before('inspect', execution_id, {'Id': container_id})
+        try:
+            container = self.client().containers.get(container_id)
+        except NotFound:
+            authority.before('absent', execution_id, {'Id': container_id})
+            return True
+        return self.remove(container)
 
     @staticmethod
     def sample(container, usage):
@@ -128,17 +169,26 @@ class DockerDriver:
         startup_error_at = None
         stage = "health"
         try:
+            self._authority()
             self.health()
             if stop.is_set():
                 result.status, result.failure_reason = "cancelled", "EXECUTION_STOPPED"
                 return result
-            create_attempted = True
-            stage = "create"
-            container = self.client().containers.create(**create_options(self.image_id, execution_id, limits))
+            from app.sandbox.policy import operation_digest
+            input_hash = operation_digest(hashlib.sha256(code.encode()).hexdigest(), 'python',
+                                          timeout_seconds, limits, self.image_id)
+            with self.dispatch_window():
+                ownership_labels = self._before('create', execution_id, operation_hash=input_hash)
+                create_attempted = True
+                stage = "create"
+                options = create_options(self.image_id, execution_id, limits)
+                options['labels'].update(ownership_labels)
+                container = self.client().containers.create(**options)
             result.container_id, result.cleanup_status = container.id, "pending"
             container.reload()
             stage = "verify"
             verify_container(container.attrs, self.image_id, limits, execution_id)
+            self._before('bind', execution_id, container)
             # Metadata is persisted before start. The permit handshake first authorizes
             # trusted launcher start, then separately authorizes code injection.
             messages.put(("created", container.id), timeout=1)
@@ -153,7 +203,9 @@ class DockerDriver:
             raw = getattr(attached, "_sock", attached)
             raw.settimeout(0.2)
             stage = "start"
-            container.start()
+            with self.dispatch_window():
+                self._before('start', execution_id, container, operation_hash=input_hash)
+                container.start()
             start = monotonic()
             last_sample = start
             while True:
@@ -169,7 +221,9 @@ class DockerDriver:
                 if attested and not injected and permit.is_set():
                     # Only this write transfers code into the sandbox; it happens once.
                     stage = "inject"
-                    raw.sendall(json.dumps({"code": code, "timeout_seconds": timeout_seconds}, ensure_ascii=False).encode() + b"\n")
+                    with self.dispatch_window():
+                        self._before('inject', execution_id, container, operation_hash=input_hash)
+                        raw.sendall(json.dumps({"code": code, "timeout_seconds": timeout_seconds}, ensure_ascii=False).encode() + b"\n")
                     permit.clear()
                     injected = True
                     start = monotonic()
@@ -286,20 +340,17 @@ class DockerDriver:
                 result.cleanup_status = "removed" if removed else "unconfirmed"
                 if not removed:
                     result.status, result.failure_reason = "needs_reconciliation", "CLEANUP_UNCONFIRMED"
+                    try:
+                        self._before('unknown', execution_id)
+                    except Exception:
+                        pass  # The exact ID/result remain durable for reconciliation.
             elif create_attempted:
-                # A timeout may hide a successful daemon-side create. Only a named
-                # lookup/owned cleanup or authoritative 404 proves no container.
-                from docker.errors import NotFound
+                # Unknown create can hide a real container. No trusted ID was
+                # committed, so name/label discovery cannot grant deletion rights.
                 try:
-                    unknown = self.client().containers.get("agentforge-p3-exec-" + execution_id.hex)
-                    result.container_id = unknown.id
-                    removed = self.remove(unknown)
-                    result.cleanup_status = "removed" if removed else "unconfirmed"
-                except NotFound:
-                    result.cleanup_status = "not_created"
+                    self._before('unknown', execution_id)
                 except Exception as exc:
-                    result.cleanup_status = "unconfirmed"
                     result.resource_usage["cleanup_error_type"] = safe_error_type(exc)
-                if result.cleanup_status == "unconfirmed":
-                    result.status, result.failure_reason = "needs_reconciliation", "CLEANUP_UNCONFIRMED"
+                result.cleanup_status = 'unconfirmed'
+                result.status, result.failure_reason = 'needs_reconciliation', 'CLEANUP_UNCONFIRMED'
         return result

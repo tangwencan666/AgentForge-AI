@@ -64,12 +64,18 @@ class TaskService:
     def __init__(self, connections, settings):
         self.connections, self.settings = connections, settings
 
+    def require_real_permit(self):
+        from app.services.permit_authority import reject_unpermitted_real
+        reject_unpermitted_real()
+
     async def create(self, tenant_id: str, key: UUID, request: TaskCreate, *, model_test=False):
         payload = request.model_dump(mode="json")
         if model_test:
             if request.execution_mode != 'real' or self.settings.real_test_budget_usd <= 0:
                 raise AppError('MODEL_TEST_BUDGET_BLOCKED', 'Real API test requires approved server-side test quota', 409)
             payload['model_test'] = True
+        if request.execution_mode == 'real':
+            self.require_real_permit()  # Only PermitService may create the fixed real test task.
         digest = hmac.new(self.settings.admin_token.get_secret_value().encode(),json.dumps(payload,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode(),hashlib.sha256).hexdigest()
         payload["goal"] = redact(payload["goal"].strip(), self.settings)
         if not payload["goal"]:
@@ -94,7 +100,7 @@ class TaskService:
                     for slot in slots:
                         if slot['role'] in needed:
                             _, _, price = ModelRouter(self.settings).resolve(slot)
-                            snapshot[slot['role']] = {k: slot[k] for k in ('provider','base_url','model','credential_reference','temperature','max_tokens','timeout','enabled','priority')}
+                            snapshot[slot['role']] = {k: slot[k] for k in ('provider','base_url','model','credential_reference','temperature','max_tokens','timeout','enabled','priority','thinking_mode','reasoning_effort')}
                             snapshot[slot['role']].update(config_version=slot['version'], is_mock=False, price=price.model_dump(mode='json'))
                     if set(snapshot) != needed:
                         raise AppError('MODEL_SLOTS_NOT_INITIALIZED', 'Required model slots are unavailable', 409)

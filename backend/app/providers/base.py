@@ -10,6 +10,9 @@ class ModelReply:
     total_tokens: int | None
     first_token_ms: int | None
     latency_ms: int
+    http_status: int | None = None
+    sse_complete: bool = False
+    usage_details: dict | None = None
 
 
 class ProviderFailure(Exception):
@@ -20,4 +23,4 @@ class ProviderFailure(Exception):
 
 class ProviderAdapter(Protocol):
     async def complete(self, config: dict, messages: list[dict], credential: str,
-                       delta: Callable[[str], Awaitable[None]]) -> ModelReply: ...
+                       delta: Callable[[str], Awaitable[None]], *, dispatch=None) -> ModelReply: ...

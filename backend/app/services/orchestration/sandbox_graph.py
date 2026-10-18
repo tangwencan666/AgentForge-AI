@@ -11,10 +11,12 @@ from app.core.errors import AppError
 from app.services.tasks import locked_task, check_lease, event
 from app.services.sandbox import EXECUTION_TERMINAL, execution_dto
 from app.schemas.sandbox import POLICY_VERSION
+from app.services.sandbox_maintenance import require_open, dispatch_window
 
 def build_sandbox_graph(connections,settings,task_id,tenant,owner,fence,saver):
     async def approval(state):
         async with connections.sessions() as session,session.begin():
+            await require_open(session)
             task=await locked_task(session,task_id,tenant)
             check_lease(task,owner,fence,allow_waiting=True)
             row=(await session.scalars(select(SandboxExecution).where(SandboxExecution.task_id==task_id))).one()
@@ -50,8 +52,9 @@ def build_sandbox_graph(connections,settings,task_id,tenant,owner,fence,saver):
                     check_lease(task,owner,fence)
                 if not dispatched:
                     try:
-                        response=await client.post(settings.sandbox_runner_url+f"/internal/executions/{execution_id}/dispatch",
-                            headers=headers,json={"task_id":str(task_id),"execution_id":str(execution_id),"owner":owner,"fence":fence})
+                        async with dispatch_window(connections):
+                            response=await client.post(settings.sandbox_runner_url+f"/internal/executions/{execution_id}/dispatch",
+                                headers=headers,json={"task_id":str(task_id),"execution_id":str(execution_id),"owner":owner,"fence":fence})
                         if response.status_code in {200,202}: dispatched=True
                         elif response.status_code==429 and response.json().get("error",{}).get("code")=="SANDBOX_CAPACITY": pass
                         else: raise AppError("SANDBOX_UNAVAILABLE","Sandbox Runner refused dispatch",503)

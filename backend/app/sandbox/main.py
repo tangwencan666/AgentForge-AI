@@ -65,8 +65,11 @@ def create_app(settings=None, connections=None, runner=None):
             healthy = bool(await asyncio.to_thread(runner.driver.health))
         except Exception:
             healthy = False
-        return {"available": healthy and not runner.blocked and not runner.closing,
-                "blocked": runner.blocked or not healthy, "active_executions": len(runner.active)}
+        from app.services.sandbox_maintenance import public_state
+        maintenance = await public_state(app.state.connections)
+        return {"available": healthy and not runner.blocked and not runner.closing and maintenance['admission_open'],
+                "blocked": runner.blocked or not healthy or not maintenance['admission_open'],
+                "active_executions": len(runner.active), 'maintenance': maintenance}
 
     @app.post("/internal/executions/{execution_id}/dispatch", status_code=202)
     async def dispatch(execution_id: UUID, request: RunnerDispatch,

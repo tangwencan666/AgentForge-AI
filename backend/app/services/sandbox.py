@@ -14,6 +14,8 @@ from app.schemas.sandbox import SandboxCreate, POLICY_VERSION
 from app.schemas.tasks import ApprovalDecision
 from app.services.context import redact
 from app.services.tasks import now, locked_task, event, TERMINAL
+from app.services.sandbox_maintenance import require_open
+from app.sandbox.history import require_replayable
 
 EXECUTION_TERMINAL = frozenset({"succeeded", "failed", "cancelled", "timed_out", "needs_reconciliation", "rejected", "output_limit"})
 
@@ -57,6 +59,7 @@ class SandboxService:
         digest = hmac.new(self.settings.admin_token.get_secret_value().encode(), op_hash.encode(), hashlib.sha256).hexdigest()
         reservation = Decimal(str(limits["cpu"])) * request.timeout_seconds
         async with self.connections.sessions() as session, session.begin():
+            await require_open(session)
             await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"), {"key":tenant+":"+str(key)})
             if parent_context:
                 from app.services.agent_tools import authorize_parent
@@ -113,11 +116,15 @@ class SandboxService:
 
     async def decide(self, execution_id, tenant, decision: ApprovalDecision):
         async with self.connections.sessions() as session, session.begin():
+            if decision.decision == 'approved':
+                await require_open(session)
             row = (await session.scalars(select(SandboxExecution).where(SandboxExecution.id==execution_id,SandboxExecution.tenant_id==UUID(tenant)))).one_or_none()
             if not row:
                 raise AppError("EXECUTION_NOT_FOUND", "Execution not found", 404)
             task = await locked_task(session,row.task_id,tenant)
             row = (await session.scalars(select(SandboxExecution).where(SandboxExecution.id==execution_id).with_for_update().execution_options(populate_existing=True))).one()
+            if decision.decision == 'approved':
+                await require_replayable(session, row)
             approval = (await session.scalars(select(TaskApproval).where(TaskApproval.id==row.approval_reference).with_for_update())).one()
             if decision.operation_hash != row.operation_hash or approval.operation_hash != row.operation_hash or approval.policy_version != POLICY_VERSION:
                 raise AppError("APPROVAL_MISMATCH", "Approval parameters changed", 409)

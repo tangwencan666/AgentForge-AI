@@ -1,6 +1,7 @@
 from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from urllib.parse import urlsplit
+from typing import Literal
 
 
 class ModelRole(StrEnum):
@@ -21,6 +22,8 @@ class ModelConfig(BaseModel):
     timeout: int = Field(default=60, ge=1, le=300)
     enabled: bool = False
     priority: int = Field(default=50, ge=0, le=100)
+    thinking_mode: Literal['disabled', 'enabled'] = 'disabled'
+    reasoning_effort: Literal['low', 'high', 'max'] = 'high'
 
     @field_validator('credential_reference')
     @classmethod
@@ -33,7 +36,7 @@ class ModelConfig(BaseModel):
     @field_validator("provider")
     @classmethod
     def provider_registered(cls, value):
-        if value is not None and value not in {"openai_compatible", "anthropic", "google", "azure_openai", "mock"}:
+        if value is not None and value not in {"deepseek", "openai_compatible", "anthropic", "google", "azure_openai", "mock"}:
             raise ValueError("provider is not registered for configuration")
         return value
 
@@ -60,6 +63,15 @@ class ModelConfig(BaseModel):
                 raise ValueError("enabled real slot requires endpoint and credential reference")
         if self.provider == "mock" and (self.credential_reference or self.base_url):
             raise ValueError("mock configuration must not contain real credentials or endpoints")
+        from app.providers.deepseek import validate_profile, uses_deepseek_profile
+        if uses_deepseek_profile(self.model_dump()):
+            from app.core.errors import AppError
+            try:
+                validate_profile(self.model_dump())
+            except (AppError, ValueError):
+                raise ValueError('invalid DeepSeek model or endpoint') from None
+        elif self.thinking_mode != 'disabled' or self.reasoning_effort != 'high':
+            raise ValueError('thinking controls require the reviewed DeepSeek adapter')
         return self
 
 

@@ -135,3 +135,6 @@ class GraphWrite(Base):
     channel: Mapped[str] = mapped_column(String(128))
     data_type: Mapped[str] = mapped_column(String(32))
     data: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+import app.domain.permits  # Register additive permit metadata in all metadata consumers.

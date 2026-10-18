@@ -1,4 +1,5 @@
 from uuid import UUID, uuid4
+import os
 from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy import select
 from app.core.errors import AppError
@@ -15,9 +16,20 @@ router = APIRouter(prefix='/api/v1', tags=['P5 inference'])
 @router.get('/models/policy', response_model=ApiResponse)
 async def policy(request: Request, tenant=Depends(require_admin)):
     s = request.app.state.settings
+    blocked = os.environ.get('AGENTFORGE_EXTERNAL_MODELS_BLOCKED', '').lower() in {'1', 'true'}
     return envelope({'real_calls_enabled': s.real_calls_enabled, 'daily_budget_usd': str(s.real_daily_budget_usd),
+        'external_calls_blocked': blocked, 'real_max_retries': s.real_max_retries,
+        'test_retry_policy': 'none',
+        'permit_required': True, 'permit_issuance_enabled': s.single_use_permits_enabled,
+        'real_worker_mode': s.real_worker_mode,
         'test_budget_usd': str(s.real_test_budget_usd), 'test_max_calls': s.real_test_max_calls,
-        'adapters': ['openai_compatible'], 'paid_test_status': 'available' if s.real_test_budget_usd > 0 and s.real_calls_enabled else 'BLOCKED'})
+        'adapters': ['openai_compatible', 'deepseek'], 'paid_test_status': 'permit_only' if s.single_use_permits_enabled and s.real_test_budget_usd > 0 and s.real_calls_enabled and not blocked else 'BLOCKED'})
+
+
+@router.get('/models/runtime-status', response_model=ApiResponse)
+async def runtime_status(request: Request, tenant=Depends(require_admin)):
+    from app.services.model_runtime_status import compare_runtime_status
+    return envelope(await compare_runtime_status(request.app.state.connections, request.app.state.settings))
 
 
 @router.post('/model-slots/{role}/test', response_model=ApiResponse, status_code=202)

@@ -1,6 +1,9 @@
 from functools import lru_cache
 from pathlib import Path
 from decimal import Decimal
+from typing import Literal
+from uuid import UUID
+import os
 from urllib.parse import urlsplit
 import ipaddress
 
@@ -10,15 +13,26 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def runtime_env_file() -> Path:
+    value = os.environ.get('AGENTFORGE_SETTINGS_FILE')
+    if not value:
+        return ROOT / '.env'
+    target = Path(value).resolve()
+    if not target.is_relative_to((ROOT / 'work').resolve()) or target.name != '.env' or not target.is_file():
+        raise ValueError('Alternate settings must be a project work/.env file')
+    return target
+
+
 def is_model_credential_name(name: str) -> bool:
     return name.startswith('AGENTFORGE_MODEL_') and name not in {
-        'AGENTFORGE_MODEL_PRICES', 'AGENTFORGE_MODEL_CREDENTIAL_HOSTS',
+        'AGENTFORGE_MODEL_PRICES', 'AGENTFORGE_MODEL_CREDENTIAL_HOSTS', 'AGENTFORGE_MODEL_CREDENTIALS_ENV_ONLY',
+        'AGENTFORGE_MODEL_PERMIT_ISSUER_TOKEN',
     }
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="AGENTFORGE_", env_file=ROOT / ".env", extra="ignore",
+        env_prefix="AGENTFORGE_", env_file=runtime_env_file(), extra="ignore",
         hide_input_in_errors=True,
     )
     environment: str = "development"
@@ -29,7 +43,7 @@ class Settings(BaseSettings):
     dependency_timeout: float = Field(default=2, gt=0, le=10)
     daily_mock_token_limit: int = Field(default=1000000, ge=1)
     daily_mock_budget_usd: Decimal = Field(default=Decimal("10"), gt=0, allow_inf_nan=False)
-    allowed_model_hosts: str = "api.openai.com,api.anthropic.com,generativelanguage.googleapis.com"
+    allowed_model_hosts: str = "api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.deepseek.com"
     sandbox_runner_token: SecretStr | None = Field(default=None, repr=False)
     sandbox_approver_token: SecretStr | None = Field(default=None, repr=False)
     mcp_server_token: SecretStr | None = Field(default=None, repr=False)
@@ -41,6 +55,12 @@ class Settings(BaseSettings):
     real_daily_token_limit: int = Field(default=100000, ge=1, le=1000000)
     real_test_budget_usd: Decimal = Field(default=Decimal('0'), ge=0, le=1, allow_inf_nan=False)
     real_test_max_calls: int = Field(default=1, ge=1, le=4)
+    real_max_retries: int = Field(default=0, ge=0, le=2)
+    model_credentials_env_only: bool = True
+    single_use_permits_enabled: bool = False
+    permit_ttl_seconds: int = Field(default=60, ge=1, le=60)
+    real_worker_mode: Literal['deny', 'permit_only'] = 'deny'
+    model_permit_issuer_token: SecretStr | None = Field(default=None, repr=False)
     model_prices: dict = Field(default_factory=dict)
     model_credential_hosts: dict = Field(default_factory=dict)
     sandbox_image_id: str | None = None
@@ -49,6 +69,11 @@ class Settings(BaseSettings):
     sandbox_max_concurrency: int = Field(default=4, ge=1, le=4)
     sandbox_tenant_concurrency: int = Field(default=2, ge=1, le=2)
     sandbox_prewarm_enabled: bool = False
+    # Deployment locator + separate private proof; neither is public task input.
+    # No environment flag grants compatibility clearance (that is a DB record).
+    sandbox_identity_id: UUID | None = None
+    sandbox_identity_generation: int | None = Field(default=None, ge=1)
+    sandbox_identity_proof: SecretStr | None = Field(default=None, repr=False)
 
     @field_validator("sandbox_image_id")
     @classmethod
@@ -98,7 +123,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def enforce_production_transport(self):
         configured = [self.admin_token, self.sandbox_runner_token, self.sandbox_approver_token,
-                      self.mcp_server_token, self.capability_approver_token]
+                      self.mcp_server_token, self.capability_approver_token, self.model_permit_issuer_token]
         values = [v.get_secret_value() for v in configured if v is not None]
         if any(len(v) < 32 for v in values) or len(values) != len(set(values)):
             raise ValueError("server roles require distinct protected credentials")

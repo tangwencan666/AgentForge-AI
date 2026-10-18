@@ -1,0 +1,40 @@
+{
+  "purpose": "Disabled preparation only; importing/enabling/testing requires separate operator action.",
+  "pricing_reference": "https://api-docs.deepseek.com/quick_start/pricing/",
+  "reviewed_date": "2026-10-15",
+  "cost_basis": "USD per 1M tokens; peak cache-miss estimate; no discount or FX conversion",
+  "server_policy": {
+    "real_calls_enabled": false,
+    "real_daily_budget_usd": "0",
+    "real_test_budget_usd": "0",
+    "real_test_max_calls": 1,
+    "real_daily_token_limit": 8256,
+    "allowed_model_hosts": "api.deepseek.com",
+    "model_credential_hosts": {
+      "AGENTFORGE_MODEL_PLANNER_KEY": ["api.deepseek.com"],
+      "AGENTFORGE_MODEL_CODER_KEY": ["api.deepseek.com"],
+      "AGENTFORGE_MODEL_RESEARCHER_KEY": ["api.deepseek.com"],
+      "AGENTFORGE_MODEL_REVIEWER_KEY": ["api.deepseek.com"]
+    },
+    "model_prices": {
+      "deepseek/deepseek-flash": {
+        "currency": "USD",
+        "input_per_million": "0.3", "output_per_million": "1.2",
+        "input_upper_bound": 8192, "output_upper_bound": 4096,
+        "version": "ds-20261015-peak-v1", "token_parameter": "max_tokens"
+      },
+      "deepseek/deepseek-v4-pro": {
+        "currency": "USD",
+        "input_per_million": "1.32", "output_per_million": "3.96",
+        "input_upper_bound": 8192, "output_upper_bound": 4096,
+        "version": "ds-20261015-peak-v1", "token_parameter": "max_tokens"
+      }
+    }
+  },
+  "slots": {
+    "planner": {"provider": "deepseek", "base_url": "https://api.deepseek.com", "model": "deepseek-flash", "credential_reference": "env:AGENTFORGE_MODEL_PLANNER_KEY", "temperature": 0.2, "max_tokens": 64, "timeout": 30, "enabled": false, "priority": 50, "thinking_mode": "disabled", "reasoning_effort": "high"},
+    "coder": {"provider": "deepseek", "base_url": "https://api.deepseek.com", "model": "deepseek-flash", "credential_reference": "env:AGENTFORGE_MODEL_CODER_KEY", "temperature": 0.2, "max_tokens": 64, "timeout": 30, "enabled": false, "priority": 50, "thinking_mode": "disabled", "reasoning_effort": "high"},
+    "researcher": {"provider": "deepseek", "base_url": "https://api.deepseek.com", "model": "deepseek-flash", "credential_reference": "env:AGENTFORGE_MODEL_RESEARCHER_KEY", "temperature": 0.2, "max_tokens": 64, "timeout": 30, "enabled": false, "priority": 50, "thinking_mode": "disabled", "reasoning_effort": "high"},
+    "reviewer": {"provider": "deepseek", "base_url": "https://api.deepseek.com", "model": "deepseek-flash", "credential_reference": "env:AGENTFORGE_MODEL_REVIEWER_KEY", "temperature": 0.2, "max_tokens": 64, "timeout": 30, "enabled": false, "priority": 50, "thinking_mode": "disabled", "reasoning_effort": "high"}
+  }
+}

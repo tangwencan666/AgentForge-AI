@@ -15,6 +15,8 @@ class ModelSlot(Base):
         CheckConstraint("timeout BETWEEN 1 AND 300", name="ck_model_timeout"),
         CheckConstraint("max_tokens BETWEEN 1 AND 131072", name="ck_model_tokens"),
         CheckConstraint("temperature BETWEEN 0 AND 2", name="ck_model_temperature"),
+        CheckConstraint("thinking_mode IN ('disabled','enabled')", name='ck_model_thinking'),
+        CheckConstraint("reasoning_effort IN ('low','high','max')", name='ck_model_effort'),
     )
     tenant_id: Mapped[UUID] = mapped_column(primary_key=True)
     role: Mapped[str] = mapped_column(String(16), primary_key=True)
@@ -28,4 +30,6 @@ class ModelSlot(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     priority: Mapped[int] = mapped_column(Integer, default=50, server_default="50")
+    thinking_mode: Mapped[str] = mapped_column(String(8), default='disabled', server_default='disabled')
+    reasoning_effort: Mapped[str] = mapped_column(String(8), default='high', server_default='high')
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -11,7 +11,7 @@ from app.domain.entities import ModelSlot
 from app.domain.tasks import AgentTask, ModelOperation
 from app.domain.real import RealDailyUsage
 from app.providers.base import ProviderFailure
-from app.providers.router import ModelRouter
+from app.providers.router import ModelRouter, price_matches_snapshot
 from app.schemas.agents import AgentPlan, AgentAnswer, AgentReview
 from app.services.context import content_hash, redact
 from app.services.tasks import now, event, locked_task, check_lease
@@ -25,12 +25,18 @@ async def real_usage(session, tenant, day):
 
 
 class RealRuntime(Runtime):
+    def require_real_permit(self):
+        from app.services.permit_authority import reject_unpermitted_real
+        reject_unpermitted_real()
+
     async def operation(self, role, round_no, payload):
-        for attempt in range(3):
+        self.require_real_permit()
+        attempt_limit = 1 if (await self.options()).get('model_test') else 1 + self.settings.real_max_retries
+        for attempt in range(attempt_limit):
             try:
                 return await self._real_attempt(role, f'{role}:{round_no}:{attempt}', round_no)
             except ProviderFailure as exc:
-                if not exc.retryable or attempt == 2 or (exc.code == 'MODEL_OUTPUT_INVALID' and attempt >= 1):
+                if not exc.retryable or attempt == attempt_limit - 1 or (exc.code == 'MODEL_OUTPUT_INVALID' and attempt >= 1):
                     raise AppError(exc.code, 'Real model attempt failed; no Mock fallback was used', 502) from None
                 await asyncio.sleep(min(.25 * (attempt + 1), .5))
 
@@ -63,6 +69,7 @@ class RealRuntime(Runtime):
         return messages, schema
 
     async def _real_attempt(self, role, op_id, round_no):
+        self.require_real_permit()
         await self.connections.redis.ping()
         async with self.connections.sessions() as session, session.begin():
             task = await locked_task(session, self.task_id, self.tenant_id)
@@ -72,7 +79,7 @@ class RealRuntime(Runtime):
             if not current or not current.enabled or current.version != config['config_version']:
                 raise AppError('MODEL_CONFIGURATION_CHANGED', 'Current slot authorization changed', 409)
             adapter, credential, price = ModelRouter(self.settings).resolve(config)
-            if content_hash(price.model_dump(mode='json')) != content_hash(config['price']):
+            if not price_matches_snapshot(price, config['price']):
                 raise AppError('MODEL_PRICE_CHANGED', 'Registered pricing policy changed', 409)
             messages, schema = await self._messages(session, task, role, round_no)
             digest = content_hash(messages)
@@ -115,7 +122,9 @@ class RealRuntime(Runtime):
                 is_mock=False, state='reserved', input_tokens=0, output_tokens=0, reserved_tokens=reserve, reserved_cost=cost,
                 cost=Decimal(0), price_version=price.version, request_hash=digest, fence=self.fence, usage_status='pending', reservation_day=now().date())
             session.add(row)
-            event(session, task, 'node_started', {'role': role, 'operation_id': op_id, 'round': round_no, 'context_hash': digest})
+            event(session, task, 'node_started', {'role': role, 'operation_id': op_id, 'round': round_no, 'context_hash': digest,
+                'model_test': bool(task.options.get('model_test')), 'retry_policy': 'none' if task.options.get('model_test') or self.settings.real_max_retries == 0 else 'bounded',
+                'call_limit': task.call_limit, 'token_limit': task.token_limit, 'budget_limit_usd': str(task.budget_limit)})
         pending, stream_count = '', 0
 
         async def delta(text):

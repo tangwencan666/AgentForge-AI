@@ -22,6 +22,8 @@ def require_approver(request: Request, credentials: HTTPAuthorizationCredentials
 @router.get("/policy",response_model=ApiResponse)
 async def policy(request: Request,tenant=Depends(require_admin)):
     data=service(request).policy()
+    from app.services.sandbox_maintenance import public_state
+    data['maintenance'] = await public_state(request.app.state.connections)
     data["runner_status"]={"available":False,"blocked":True,"active_executions":None}
     settings=request.app.state.settings
     if settings.sandbox_runner_token:
@@ -34,6 +36,8 @@ async def policy(request: Request,tenant=Depends(require_admin)):
                     data["runner_status"]={"available":status.get("available") is True,"blocked":status.get("blocked") is not False,
                         "active_executions":status.get("active_executions") if isinstance(status.get("active_executions"),int) else None}
         except (httpx.HTTPError,ValueError): pass
+    if not data['maintenance']['admission_open']:
+        data['runner_status']['available'], data['runner_status']['blocked'] = False, True
     return envelope(data)
 
 @router.post("/executions",response_model=ApiResponse,status_code=202)
