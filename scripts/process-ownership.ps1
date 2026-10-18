@@ -1,3 +1,5 @@
+# Legacy diagnostic predicate only. It grants no launch/stop authority; callers
+# must use the fixed lifecycle entry and its live OS identity/IPC checks.
 function Test-AgentForgeProcess($taskProcess, [string]$taskName, [string]$taskRoot) {
     if (-not $taskProcess -or -not $taskProcess.CommandLine -or -not $taskProcess.ExecutablePath) { return $false }
     $taskCommand = $taskProcess.CommandLine.Replace('/', '\')
