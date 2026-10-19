@@ -1,5 +1,6 @@
 """Policy unit tests. These doubles are not Docker isolation evidence."""
 from copy import deepcopy
+from contextlib import nullcontext
 from datetime import timedelta
 from decimal import Decimal
 import hashlib
@@ -15,6 +16,18 @@ from app.schemas.sandbox import POLICY_VERSION, ResourceLimits
 from app.services.tasks import now
 
 IMAGE = "sha256:" + "a" * 64
+
+
+def policy_only_authority(driver):
+    """Explicit unit double isolates P3 IO/limits tests from the DB authority.
+
+    These tests are NOT proof of ownership. S3A database/SDK-Stub tests use the
+    actual coordinator/bridge; a production driver without authority is denied.
+    """
+    driver._authority = lambda: True
+    driver._before = lambda *args, **kwargs: {}
+    driver.dispatch_window = nullcontext
+    return driver
 
 
 def facts():
@@ -150,7 +163,7 @@ def test_docker_unavailable_fails_closed_without_host_code_or_raw_error(capsys):
     class Unavailable:
         def ping(self):
             raise RuntimeError("private-password-and-code")
-    driver = DockerDriver(IMAGE, client=Unavailable())
+    driver = policy_only_authority(DockerDriver(IMAGE, client=Unavailable()))
     result = driver.run(uuid4(), "raise RuntimeError('would run on host')", ResourceLimits().model_dump(), 1, Event(), Event(), Queue())
     assert result.status == "failed" and result.failure_reason == "DOCKER_UNAVAILABLE"
     assert result.container_id is None and result.cleanup_status == "not_created"
@@ -159,9 +172,9 @@ def test_docker_unavailable_fails_closed_without_host_code_or_raw_error(capsys):
 
 
 @pytest.mark.parametrize("outcome,expected_status,expected_cleanup", [
-    ("response_lost_created", "failed", "removed"),
+    ("response_lost_created", "needs_reconciliation", "unconfirmed"),
     ("daemon_unreachable", "needs_reconciliation", "unconfirmed"),
-    ("authoritative_absent", "failed", "not_created"),
+    ("authoritative_absent", "needs_reconciliation", "unconfirmed"),
 ])
 def test_unknown_create_result_never_assumes_container_absent(monkeypatch, outcome, expected_status, expected_cleanup):
     import sys
@@ -189,14 +202,11 @@ def test_unknown_create_result_never_assumes_container_absent(monkeypatch, outco
             if outcome == "authoritative_absent" or removed:
                 raise NotFound()
             return container
-    driver = DockerDriver(IMAGE, client=SimpleNamespace(containers=Containers()))
+    driver = policy_only_authority(DockerDriver(IMAGE, client=SimpleNamespace(containers=Containers())))
     driver.health = lambda: True
     result = driver.run(execution_id, "print(1)", ResourceLimits().model_dump(), 1, Event(), Event(), Queue())
     assert (result.status, result.cleanup_status) == (expected_status, expected_cleanup)
-    if outcome == "response_lost_created":
-        assert removed == [container.id]
-    else:
-        assert removed == []
+    assert removed == []  # No durable ID: never infer ownership from a name.
 
 
 def test_cleanup_handles_container_exit_between_inspect_and_kill():
@@ -215,7 +225,7 @@ def test_cleanup_handles_container_exit_between_inspect_and_kill():
     container.remove = lambda **kwargs: removed.append(container.id)
     def get(name):
         raise NotFound("authoritative test absence")
-    driver = DockerDriver(IMAGE, client=SimpleNamespace(containers=SimpleNamespace(get=get)))
+    driver = policy_only_authority(DockerDriver(IMAGE, client=SimpleNamespace(containers=SimpleNamespace(get=get))))
     assert driver.remove(container) is True and removed == [container.id]
 
 
@@ -248,7 +258,7 @@ def test_trusted_startup_stderr_is_bounded_and_never_authorizes_code():
         return container
     fake_client = SimpleNamespace(containers=SimpleNamespace(create=lambda **kwargs: container, get=get),
         api=SimpleNamespace(attach_socket=lambda *args, **kwargs: FakeSocket()))
-    driver = DockerDriver(IMAGE, client=fake_client)
+    driver = policy_only_authority(DockerDriver(IMAGE, client=fake_client))
     driver.health = lambda: True
     permit = Event()
     permit.set()  # Unit double authorizes only trusted launcher start.
@@ -302,7 +312,7 @@ def test_output_limit_survives_natural_exit_race_at_primary_kill():
         return container
     fake_client = SimpleNamespace(containers=SimpleNamespace(create=lambda **kwargs: container, get=get),
         api=SimpleNamespace(attach_socket=lambda *args, **kwargs: FakeSocket()))
-    driver = DockerDriver(IMAGE, client=fake_client)
+    driver = policy_only_authority(DockerDriver(IMAGE, client=fake_client))
     driver.health = lambda: True
     result = driver.run(execution_id, "print('bounded test')", ResourceLimits().model_dump(), 1, Event(), permit, Queue())
     assert result.status == "output_limit" and result.failure_reason == "OUTPUT_LIMIT"

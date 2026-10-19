@@ -3,7 +3,7 @@ import { loadEnv } from 'vite';
 import path from 'node:path';
 
 // Credentials stay in the Node runner and browser memory; tracing is disabled.
-const env = loadEnv('development', path.resolve('..'), '');
+const env = loadEnv('development', process.env.AGENTFORGE_SETTINGS_FILE ? path.dirname(process.env.AGENTFORGE_SETTINGS_FILE) : path.resolve('..'), '');
 test.use({ trace: 'off' });
 test.skip(process.env.AGENTFORGE_RUN_SANDBOX !== '1', 'Requires explicitly enabled, real Docker P3 integration environment.');
 

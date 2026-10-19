@@ -195,7 +195,8 @@ async def test_real_isolated_unavailable_runner_refuses_without_launch_or_host_f
     harness = real_runner
     # Root creates this dedicated Linux control-plane container with a nonexistent
     # DOCKER_HOST and no socket mount. The shared daemon is never stopped.
-    failure_url = "http://127.0.0.1:18121"
+    from urllib.parse import urlsplit
+    failure_url = f"http://127.0.0.1:{urlsplit(harness.settings.sandbox_runner_url).port + 1}"
     row = await harness.approved(harness.settings.tenant_id,
         "print('unavailable runner must never execute this code')")
     _, request = await harness.claim(row)

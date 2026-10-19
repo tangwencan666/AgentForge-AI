@@ -62,6 +62,12 @@ class ProviderStub:
 
 @pytest.fixture
 async def setup(monkeypatch):
+    # Legacy multi-role graph/budget regression uses explicit authorization AND provider doubles.
+    # No real adapter has a DispatchLease here; the production HTTP permit guard remains intact.
+    from app.services.orchestration.real_runtime import RealRuntime
+    monkeypatch.setattr(TaskService, 'require_real_permit', lambda self: None)
+    monkeypatch.setattr(RealRuntime, 'require_real_permit', lambda self: None)
+    monkeypatch.setattr('app.workers.engine.require_permit_task', lambda task: None)
     if os.environ.get('AGENTFORGE_RUN_INTEGRATION') != '1': pytest.skip('Real project PostgreSQL/Redis opt-in required')
     monkeypatch.setenv('AGENTFORGE_MODEL_P5_STUB_KEY', 'explicit-provider-stub-only-value')
     monkeypatch.setattr(ModelRouter, 'adapters', {'openai_compatible': ProviderStub})
@@ -70,6 +76,8 @@ async def setup(monkeypatch):
         setattr(ProviderStub, key, value)
     price = {'input_per_million': '1', 'output_per_million': '2', 'input_upper_bound': 8192, 'output_upper_bound': 1024, 'version': 'explicit-stub-price-v1'}
     settings = Settings().model_copy(update={'tenant_id': str(uuid4()), 'real_calls_enabled': True,
+        'real_max_retries': 2,
+        'allowed_model_hosts': 'api.openai.com',  # Explicit Stub policy, independent of the operator's live host list.
         'real_daily_budget_usd': Decimal('1'), 'real_daily_token_limit': 100000,
         'model_credential_hosts': {'AGENTFORGE_MODEL_P5_STUB_KEY': ['api.openai.com']},
         'model_prices': {'openai_compatible/stub-' + role: price for role in ('planner','coder','researcher','reviewer')}})
@@ -340,6 +348,23 @@ async def test_real_connectivity_test_quota_is_shared_and_cannot_be_reused(setup
     row = await drive(setup, second['task_id'])
     assert row['status'] == 'failed' and row['error_code'] == 'MODEL_TEST_BUDGET_BLOCKED'
     assert len(ProviderStub.calls) == 1
+
+
+async def test_connectivity_failure_is_not_retried_and_limits_are_audited(setup):
+    settings, connections, worker, service = setup
+    approved = settings.model_copy(update={'real_test_budget_usd': Decimal('.1'), 'real_test_max_calls': 1})
+    service.settings = worker.settings = approved
+    ProviderStub.failure, ProviderStub.fail_count = 'MODEL_RATE_LIMIT', 3
+    task = await service.create(settings.tenant_id, uuid4(), TaskCreate(goal='explicit Stub no-retry audit',
+        workflow='chat', execution_mode='real', max_calls=1), model_test=True)
+    row = await drive(setup, task['task_id'])
+    assert row['status'] == 'failed' and row['error_code'] == 'MODEL_RATE_LIMIT'
+    assert len(ProviderStub.calls) == row['usage']['model_attempts'] == 1
+    assert Decimal(row['usage']['reserved_real_cost_usd']) > 0
+    async with connections.sessions() as session:
+        audit = (await session.scalars(select(TaskEvent).where(TaskEvent.task_id == UUID(task['task_id']), TaskEvent.kind == 'node_started'))).one()
+        assert audit.payload['retry_policy'] == 'none' and audit.payload['call_limit'] == 1
+        assert audit.payload['token_limit'] == 100000 and audit.payload['model_test']
 
 
 @pytest.mark.sandbox

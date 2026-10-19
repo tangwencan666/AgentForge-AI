@@ -5,7 +5,7 @@ from app.main import create_app
 from conftest import StubConnections
 
 
-@pytest.mark.parametrize('path', ['/models/policy', '/models/metrics', '/chat/history'])
+@pytest.mark.parametrize('path', ['/models/policy', '/models/metrics', '/models/runtime-status', '/chat/history'])
 def test_inference_configuration_and_history_are_protected(settings, path):
     with TestClient(create_app(settings, StubConnections())) as client:
         assert client.get('/api/v1' + path).status_code == 401

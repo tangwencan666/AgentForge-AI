@@ -3,9 +3,9 @@ import { loadEnv } from 'vite';
 import path from 'node:path';
 
 // Test runner only; no credentials are included in the frontend bundle or test output.
-const env = loadEnv('development', path.resolve('..'), '');
+const env = loadEnv('development', process.env.AGENTFORGE_SETTINGS_FILE ? path.dirname(process.env.AGENTFORGE_SETTINGS_FILE) : path.resolve('..'), '');
 
-test('real browser creates a clearly marked Mock task, approves plan and receives SSE result', async ({ page }) => {
+test('real browser creates a clearly marked Mock task, approves plan and receives SSE result', async ({ page }, testInfo) => {
   await page.goto('/tasks');
   await page.getByLabel('管理员 Token', { exact:true }).fill(env.AGENTFORGE_ADMIN_TOKEN);
   await page.getByRole('button', { name:'授权当前页面' }).click();
@@ -16,7 +16,7 @@ test('real browser creates a clearly marked Mock task, approves plan and receive
   await expect(page.getByTestId('task-status')).toHaveText('succeeded', { timeout:15000 });
   await expect(page.getByTestId('task-result')).toContainText('[MOCK]');
   await expect(page.getByText('node_completed', { exact:true }).first()).toBeVisible();
-  await page.screenshot({ path:'../work/p2-workflow.png', fullPage:true });
+  await page.screenshot({ path: testInfo.outputPath('p2-workflow.png'), fullPage:true });
   const storage = await page.evaluate(() => ({ local:localStorage.length, session:sessionStorage.length }));
   expect(storage).toEqual({ local:0, session:0 });
   await page.getByRole('button', { name:'退出授权' }).click();

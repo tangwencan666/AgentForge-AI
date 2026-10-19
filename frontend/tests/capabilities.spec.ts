@@ -3,7 +3,7 @@ import { loadEnv } from 'vite';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-const env = loadEnv('development', path.resolve('..'), '');
+const env = loadEnv('development', process.env.AGENTFORGE_SETTINGS_FILE ? path.dirname(process.env.AGENTFORGE_SETTINGS_FILE) : path.resolve('..'), '');
 test.use({ trace: 'off' });
 test.skip(process.env.AGENTFORGE_RUN_INTEGRATION !== '1', 'Requires real P4 PostgreSQL and controlled MCP subprocess.');
 const adminHeaders = { Authorization: `Bearer ${env.AGENTFORGE_ADMIN_TOKEN}` };
@@ -22,7 +22,7 @@ async function approve(page: Page) {
   await page.getByRole('button', { name: '批准 P4 操作', exact: true }).click();
 }
 
-test('real MCP page enforces approval, writes once, reads and revokes permission', async ({ page, request }) => {
+test('real MCP page enforces approval, writes once, reads and revokes permission', async ({ page, request }, testInfo) => {
   test.setTimeout(60000);
   const resource = 'e2e-' + randomUUID().slice(0, 8);
   await auth(page, '/mcp');
@@ -55,13 +55,13 @@ test('real MCP page enforces approval, writes once, reads and revokes permission
   expect(actual.status).toBe('succeeded');
   expect(actual.result).toEqual({ resource, text: 'P4 browser actual note', revision: 1, found: true });
   expect((await request.put('/api/v1/mcp/permissions', { headers: adminHeaders, data: { tool: 'notes.read', resource, allowed: false } })).ok()).toBeTruthy();
-  await page.screenshot({ path: '../work/p4-mcp.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('p4-mcp.png'), fullPage: true });
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 });
   await page.getByRole('button', { name: '退出授权', exact: true }).click();
   await expect(page.getByTestId('mcp-call-status')).toHaveCount(0);
 });
 
-test('real Skills Center registers, installs, enables, calls and disables an immutable version', async ({ page, request }) => {
+test('real Skills Center registers, installs, enables, calls and disables an immutable version', async ({ page, request }, testInfo) => {
   test.setTimeout(60000);
   const skill_id = 'e2e-skill-' + randomUUID().slice(0, 8);
   const resource = 'e2e-note-' + randomUUID().slice(0, 8);
@@ -96,7 +96,7 @@ test('real Skills Center registers, installs, enables, calls and disables an imm
   expect(denied.status()).toBe(403);
   expect((await denied.json()).error.code).toBe('SKILL_DISABLED');
   expect((await request.put('/api/v1/mcp/permissions', { headers: adminHeaders, data: { tool: 'notes.read', resource, allowed: false } })).ok()).toBeTruthy();
-  await page.screenshot({ path: '../work/p4-skills.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('p4-skills.png'), fullPage: true });
   await page.reload();
   await expect(page.getByLabel('管理员 Token', { exact: true })).toBeVisible();
   await expect(page.getByTestId('skill-detail')).toHaveCount(0);

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test('Dashboard reads real PostgreSQL and Redis readiness through frontend proxy', async ({ page, request }) => {
+test('Dashboard reads real PostgreSQL and Redis readiness through frontend proxy', async ({ page, request }, testInfo) => {
   const response = await request.get('/health/ready');
   expect(response.status()).toBe(200);
   const actual = await response.json();
@@ -9,7 +9,7 @@ test('Dashboard reads real PostgreSQL and Redis readiness through frontend proxy
   await expect(page.getByTestId('service-status')).toHaveText('服务就绪');
   await expect(page.getByTestId('postgres-status')).toHaveText('真实连通');
   await expect(page.getByTestId('redis-status')).toHaveText('真实连通');
-  await page.screenshot({ path: '../work/dashboard.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('dashboard.png'), fullPage: true });
 });
 
 test('all ten pages are reachable and unimplemented pages are explicit', async ({ page }) => {

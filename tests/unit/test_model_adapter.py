@@ -52,9 +52,14 @@ def test_priority_orders_ready_roles_without_changing_their_routes():
 
 
 def setup_transport(monkeypatch, handler):
+    from transport_permit_stub import authorize_mock_transport
+    authorize_mock_transport(monkeypatch)
     original = httpx.AsyncClient
     monkeypatch.setattr('app.providers.openai_compatible.public_address', async_ip)
-    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
+    def client(**kw):
+        kw.pop('transport', None)
+        return original(transport=httpx.MockTransport(handler), **kw)
+    monkeypatch.setattr(httpx, 'AsyncClient', client)
 
 
 async def async_ip(host): return '93.184.216.34'
@@ -97,6 +102,8 @@ async def test_malformed_or_incomplete_stream_is_not_a_success(monkeypatch, body
 
 
 def test_policy_defaults_do_not_corrupt_json_but_credentials_still_redact(settings, monkeypatch):
+    # Exercise the explicit protected-dotenv fallback, independent of maintenance env-only policy.
+    settings = settings.model_copy(update={'model_credentials_env_only': False})
     from app.services.context import redact
     import dotenv
     secret = secrets.token_hex(24)
