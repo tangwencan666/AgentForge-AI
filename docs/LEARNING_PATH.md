@@ -1,6 +1,12 @@
 # AgentForge AI P5 源码学习路径
 
-下面路径均位于 `D:\AIProjects\AgentForge-AI`。先理解 P1 健康请求、P2 持久化协作、P3 可信 Runner，再跟随 P4 MCP Gateway 与 Skill 生命周期，最后阅读 P5 模型适配、预算和恢复。默认回答为明确 Mock；真实供应商验收当前 BLOCKED，沙箱 Python 为真实 Docker 执行。实际验收状态见各阶段报告。
+> 2026-10-19 阅读提示：G4 `e9ced78` 仅 Archive-only 归档；原 IPC 故障和 B1/B2/B3 运行前提未解决，B4 仅离线修复，**RUNTIME_BLOCKED**。当前主服务、数据库/Docker、凭据和 Permit/预算状态本轮均未核验；本文件是源码阅读路径，不授权执行运维或测试命令。历史测试数与运行观察仅限原日期，当前结论先读 [PROJECT_STATUS](PROJECT_STATUS.md)。README 保留原 P5 快照，不能用其中0006描述推断现时主库。
+
+S2历史阅读补充（2026-10-18）：先读[S2暂停报告](P5_LIVE_MAINT_S2_REPORT.md)和[Sandbox隔离设计](SANDBOX_ISOLATION_DESIGN.md)，理解当时为何“另一个数据库没有此记录”不是容器删除授权。work/maint-s2/readonly-precheck-20261018/stub-repro.py的Docker/数据库为替身，只证明错误决策可复现。后续S3-A/B1/B3源码已实现归属与冻结，但主Runner未据此获准升级，17项集成和2项浏览器仍BLOCKED；不能运行旧共享Runner测试来验证。
+
+P5-LIVE DeepSeek准备阅读：从 providers/deepseek.py 的显式模式和参数选择，读到共享SSE解析和USD价格快照，再查看schemas/models.py、ModelSlot的两项字段及0007迁移。scripts/test-offline.py不加载本机dotenv，但仍会选择已知失败的生命周期测试，不能视为全绿。0007及后续0008的主库应用有历史记录；0009/0010仅提交和隔离验证，本轮不核验实时版本，真实供应商验收未完成。最初准备阶段的限制见P5_LIVE_DEEPSEEK.md，按其日期阅读。
+
+下面路径均位于 `D:\AIProjects\AgentForge-AI`。先理解 P1 健康请求、P2 持久化协作、P3 可信 Runner，再跟随 P4 MCP Gateway 与 Skill 生命周期，最后阅读 P5 模型适配、预算和恢复。Mock 必须显式标记，真实故障不伪装 Mock；沙箱代码仅允许受审查 Docker 路径，无宿主执行回退。历史 P3 实测不代表当前17＋2已通过。
 
 ## 1 从运行入口开始
 
@@ -28,7 +34,7 @@ backend/app/services/models.py 的 `validate_configuration` 检查批准端点�
 
 backend/app/domain/entities.py 的 `Base` 与 `ModelSlot` 定义 ORM。复合主键 tenant_id+role 限制租户槽位，数据库 CheckConstraint 提供参数约束。
 
-阅读 backend/migrations/env.py：它把异步数据库连接转入 Alembic 的同步迁移上下文。再阅读 migrations/versions/0001_model_slots.py：创建核心表并填入四个停用槽位。scripts/migrate.py 提供 upgrade/check/current 安全命令；迁移不应在每个 HTTP 请求中执行。
+阅读 backend/migrations/env.py：它把异步数据库连接转入 Alembic 的同步迁移上下文。再阅读 migrations/versions/0001_model_slots.py：创建核心表并填入四个停用槽位。scripts/migrate.py 是受维护作用域保护的固定 upgrade/check/current 入口，upgrade 还需独立批准；不因命令存在就可对主库执行，迁移也不应在每个 HTTP 请求中执行。
 
 deploy/init-app-role.sql 定义本地应用非超级用户；compose.yaml 定义专属卷、服务健康检查和回环端口。数据库和 Redis 的独立开发容器不是沙箱；P3 使用独立 Runner 和完全不同的执行容器权限边界。
 
@@ -38,13 +44,13 @@ backend/app/core/security.py 的 `require_admin` 进行固定时间 Token 比较
 
 backend/app/core/logging.py 的 `JsonFormatter` 采用事件和字段白名单，不序列化动态异常消息、request body、Authorization 或连接字符串；Uvicorn access log 关闭。main.py 的异常处理器只返回安全类型和字段名，不返回 Pydantic input 和 ctx。
 
-scripts/bootstrap_local.py 只生成开发服务秘密，拒绝覆盖；scripts/check_secrets.py 检查当前已跟踪/未跟踪源码、前端产物、日志和测试报告中的已知秘密。观察 .gitignore 对 .env、work、日志和依赖目录的忽略。保护秘密需要入口、出口、日志和 Git 一起约束，不能仅靠页面遮挡。
+scripts/bootstrap_local.py 只生成开发服务秘密，拒绝覆盖；scripts/check_secrets.py 的 `--no-local-secrets` 仅扫描常见凭据格式，不读dotenv或已知Key做比对，不能证明所有未知秘密不存在。默认已知秘密比对模式会读取本地配置，不能当作本轮无秘密读取命令。观察 .gitignore 对 .env、work、日志和依赖目录的忽略，不能仅靠页面遮挡保护秘密。
 
 ## 6 用测试理解行为
 
 先看 tests/unit/test_config.py 和 test_logging.py，理解哪些输入必须拒绝。再看 tests/http/test_api.py 的显式 StubConnections，学习 HTTP 契约与故障响应；不要把测试替身当成连接证据。
 
-随后读 tests/integration/test_dependencies.py：真实 PostgreSQL/Redis、迁移、非超级用户、四槽位持久化与版本冲突。最后阅读 frontend/tests/smoke.spec.ts：实际代理联调、十页导航、明确的故障拦截测试和直接访问页面。自己停掉本项目 Redis，再刷新 Dashboard，可观察真实未就绪；实验只操作本项目服务，随后恢复。
+随后读 tests/integration/test_dependencies.py：真实 PostgreSQL/Redis、迁移、非超级用户、四槽位持久化与版本冲突。最后阅读 frontend/tests/smoke.spec.ts 的隔离联调和故障拦截。停止 Redis 的故障实验只可在另行批准且已证明归属的独立环境进行；本轮不停止主服务，也不自动恢复它们。
 
 ## 7 下一步学习顺序
 
@@ -64,7 +70,7 @@ orchestration/runtime.py 的 operation 用稳定 role/round/attempt 标识去重
 
 orchestration/checkpoints.py 的 PostgresTaskSaver 实现 LangGraph 异步保存和 pending writes。理解业务账本与检查点的不同用途：检查点帮助恢复位置，账本防止重复计量。写入前检查 owner/fence，旧进程不可覆盖新进程。
 
-最后读 api/v1/tasks.py 的 SSE、frontend/src/api/tasks.ts 的游标与重连、pages/Tasks.tsx 和 Approvals.tsx 的真实 UI 操作。LocalAuth.tsx 只在内存保留本地 Token。tests/integration/test_workflows.py 验证真实数据库/Redis、接管、预算竞争和回放；scripts/p2-recovery-probe.py 验证真实进程重启。
+最后读 api/v1/tasks.py 的 SSE、frontend/src/api/tasks.ts 的游标与重连、pages/Tasks.tsx 和 Approvals.tsx 的真实 UI 操作。LocalAuth.tsx 只在内存保留本地 Token。tests/integration/test_workflows.py 验证真实数据库/Redis、接管、预算竞争和回放；旧 scripts/p2-recovery-probe.py 已禁用，不能再用于重启主服务。
 
 ## 9 按一次 P3 执行读源码
 
@@ -79,7 +85,7 @@ orchestration/checkpoints.py 的 PostgresTaskSaver 实现 LangGraph 异步保存
 7. `backend/app/sandbox/policy.py`：`operation_digest()` 将代码哈希、镜像 ID、超时、资源和 policy_version 绑定审批；`validate_execution()` 重新验证数据库记录、独立批准和资源预留；`create_options()` 生成固定 Docker 配置；`verify_container()` 与 `verify_attestation()` 分别校验 daemon 创建结果和代码注入前的容器内状态。
 8. `sandbox-image/Dockerfile` 与 `sandbox-image/launcher.py`：固定基础镜像与非 root 身份，`attest()` 输出 UID、seccomp、capabilities、cgroup 与网络接口；`main()` 等待有界输入、写容器 tmpfs，再启动 `python -I -S` 子进程和独立超时 alarm。不要在 Windows 宿主机运行此 launcher 来执行待审代码。
 9. `backend/app/sandbox/driver.py`：`DockerDriver.health()` 只查询固定已批准镜像，不自动 pull；`run()` 创建、inspect、握手、单次代码注入、限制输出、采样资源、超时终止；`remove()` kill/remove 后再查询确认不存在。查看 finally 路径，不以正常退出代替清理。
-10. `backend/app/sandbox/engine.py`：`SandboxRunner.dispatch()` 在 Docker 前提交启动意图，数据库锁控制跨进程并发；`_authorize_boundary()` 在启动和代码注入前重复权限检查；`_monitor()` 观察 deadline 与取消；`_finish()` 脱敏摘要和结算；`reconcile()` 只清理确定归属的本项目容器，未知结果进入 needs_reconciliation，不能重跑。
+10. `backend/app/sandbox/engine.py`：新版 `SandboxRunner.dispatch()` 在 Docker 前提交意图；`_authorize_boundary()` 重验权限；`_monitor()` 观察 deadline/取消；`_finish()` 脱敏结算；`reconcile()` 结合可信归属记录、实际CID和代次限制管理范围，UNKNOWN 不重放。此为已提交源码，不是旧主Runner已经加载的新行为；旧宽泛清理风险见兼容报告。
 11. `backend/app/sandbox/main.py` 与 `compose.yaml`：独立控制面 API、内部 Token、loopback 端口和 daemon Socket。可信 Runner 有高权限；实际执行容器无 Socket。Runner 不能作为模型工具或公共 API 暴露。
 12. `frontend/src/api/sandbox.ts`、`frontend/src/pages/Sandbox.tsx`：复用管理员内存授权，独立审批者 Token 只用于 source/decision；源代码哈希核对、状态轮询、关联任务 SSE、真实输出和清理。对比 Tasks.tsx 的显式 Mock 标签，不混淆真实代码执行和真实模型推理。
 
@@ -89,7 +95,7 @@ orchestration/checkpoints.py 的 PostgresTaskSaver 实现 LangGraph 异步保存
 
 再读 `tests/integration/test_sandbox.py`：真实 PostgreSQL/Redis、独立 Runner 和 Docker，使用有界代码验证正常输出、无网络、非 root、只读根、专用宿主标记不可读、CPU/内存/PIDs 限额、超时取消、输出上限、跨任务无状态泄露、重复消息和 Worker 恢复。测试使用本项目无敏感标记，不读取真实凭证或进行破坏性攻击。
 
-`scripts/test-p3.ps1` 负责测试时暂停本项目后台 Worker并恢复，显式启用真实集成与沙箱 opt-in。`frontend/tests/sandbox.spec.ts` 使用真实后端批准/拒绝流程；AGENTFORGE_RUN_SANDBOX 未置 1 时会 skip，skip 不是验收通过。测试不写密码到 trace；最终数量及实际运行证据见 P3_REPORT。
+当前 `scripts/test-p3.ps1` 经共享入口到 `lifecycle_regression.py` 后直接拒绝 S1_RUNNER_ISOLATION_BLOCKED，不启用真实集成或创建/清理故障Runner；pytest同样拒绝 RUN_SANDBOX=1，常规Playwright排除sandbox.spec.ts。真实批准/拒绝用例源码保留，但17＋2执行须独立隔离与新授权，不能以 opt-in、skip 或旧P3报告计为通过。
 
 完成测试后学习 `reconcile()` 的 ownership、标签、固定命名与租约检查：只可清理自己的容器，不能使用 Docker 全局 prune。默认预热关闭，运行过不可信代码的容器不回池；Docker 不可用没有宿主机执行回退。Docker Desktop 的 Linux VM 结果不能证明 Windows/VM 逃逸、生产身份或 AppArmor/SELinux 全部安全，相关残余风险需保留。
 
@@ -115,7 +121,7 @@ orchestration/checkpoints.py 的 PostgresTaskSaver 实现 LangGraph 异步保存
 
 最后读 `tests/unit/test_mcp_policy.py`、`tests/http/test_capabilities_api.py`、`tests/integration/test_capabilities.py` 和 `frontend/tests/capabilities.spec.ts`：分别验证 Schema/签名、角色边界、真实数据库/子进程与真实浏览器。传输丢失和审计故障使用显式故障注入，不能把它们当成独立远程服务器验收；正常读写链路确实启动项目 MCP Server。
 
-运行 `scripts/test-p4.ps1` 会同时执行 P3 Docker 安全回归。P4 历史数量、修复与限制见 P4_REPORT；当前另按明确授权实施 P5，完整回归使用 `scripts/test-p5.ps1`。
+当前 test-p2/p3/p4/p5 分别选择阶段集成，均带单元/HTTP；P4 不再隐含执行 P3，需要分别运行。P5 强制专用 permit-test 配置，否则提前拒绝。所有入口均不自动恢复主服务。P4 历史数量见 P4_REPORT，现行入口见 LOCAL_LIFECYCLE_GUARD。
 
 ## 13 四个槽位如何连接真实 API
 
@@ -133,6 +139,34 @@ TaskService.create 保存角色/价格快照 → Redis/Worker领取租约 → Re
 
 ## 15 通过测试区分真实能力与替身证据
 
-test_model_adapter.py 用明确 MockTransport；test_real_agents.py 使用真实 PostgreSQL/Redis/LangGraph 和明确 Provider Stub，包含真实 MCP/P3 Docker。p5-worker-recovery-probe.py 真正终止并重启专用 OS Worker，但模型仍为 Stub。最后单独运行 test-real-models.py；当前 BLOCKED、外部请求0次，不能把前几类测试当供应商验收。
+test_model_adapter.py 使用 MockTransport；test_real_agents.py 的独立资源集成使用 PostgreSQL/Redis/LangGraph 和 Provider Stub，P3 Docker 相关真实测试仍受隔离阻塞。旧 p5-worker-recovery-probe.py 已禁用；两项 Permit OS 崩溃恢复的克隆库历史证据见 test_execution_permits.py 和 lifecycle_permit_child.py，不代表本轮重跑。真实模型验收需新授权；test-real-models.py 仅观察已有独立Permit，不签发或派发。
 
 前端读 ModelCenter.tsx 的安全引用/连接测试、Tasks.tsx 的 Real/Mock/DAG/工具/预算、Chat.tsx 的持久化历史与 SSE。密钥只在本地受保护环境设置。完成本阶段后暂停，P6 需要新授权。
+
+## 16 无模型费用的完整验收
+
+读 scripts/p5-live-preflight.py 的服务配置白名单、凭据名称检查、零预算及子进程环境；再看 core/config.py 的受限维护dotenv、providers/openai_compatible.py 的DNS前出口门、tests/fixtures/preflight_guards.py 的测试网络限制。只看MockTransport通过不能证明真实供应商可用。
+
+读 scripts/p5-live-database-check.py 的历史备份、临时库恢复、升降级及指纹比较实现；旧 backup/演练入口已经退役，不能按阅读顺序实际执行。347项回归、14+1浏览器及OS重启是[P5_LIVE_PREFLIGHT_REPORT](P5_LIVE_PREFLIGHT_REPORT.md)原日期证据，不能当本轮结果。再读 execution_permits.py 的签发、事务认领/预算预留、HTTP前意图和UNKNOWN结算；TaskService拒绝普通real任务。维护wrapper不授予收费或绕过维护门权限，不在聊天传Key。
+
+## 17 进程继承、存在性与认证是不同证据
+
+读 start-coder-local.ps1：只用 Test-Path 检查名字，经共享管理器创建或复用身份与配置一致的受保护 API/Worker，原生继承父 PowerShell 环境，前端不重启。不匹配实例不会静默替换。再读 model_runtime_status.py 的存在布尔观察、带有效期的 Worker 状态与配置摘要；True 不代表认证通过，另一个终端的 True 也不代表当前服务 True。看 test_coder_local.py 的“不读变量值”测试和 LOCAL_LIFECYCLE_GUARD 的现行操作；DEEPSEEK_CODER_LOCAL 中旧 False/False 为历史观察。所有真实调用仍需独立授权。
+
+## 18 本地生命周期保护的阅读顺序
+
+先读 LOCAL_LIFECYCLE_GUARD 和 LOCAL_LIFECYCLE_TEST_REPORT。随后依次读 scripts/lifecycle-entry.ps1 → lifecycle.py → lifecycle_manager.py 的 operation_lock、_check、start/stop、manual_stop、maintenance_session。重点比较普通维护与人工停止的不同授权，以及 protected 记录为何在进程死亡后仍保留。
+
+再读 NativeBackend.launch/terminate 和 managed_service.py：启动意图、一次 claim、UUID、实际 Windows FILETIME、venv 转发父子进程、同一终止句柄、应用导入前固定关闭门禁。Worker 的进程存活不等于数据库或模型就绪，专用 check-coder-local.py 另核对0008和实际 runtime PID。
+
+最后读 lifecycle_regression.py、tests/unit/test_lifecycle_manager.py、tests/fixtures/lifecycle_acceptance.py。FakeBackend 是逻辑替身；NativeBackend 链使用实际 Windows 进程，但应用是可信标准库 stub、随机端口及假 Key。lifecycle_permit_child.py 的双身份清理用于克隆库的真实 OS Permit 崩溃测试，模型仍是虚拟传输。不要将这些证据称为真实供应商认证或绝对进程安全。
+
+## 19 三项封版缺口修复
+
+先读 [MAINTENANCE_ENTRIES](MAINTENANCE_ENTRIES.md) 与 [P5_SEAL_FIX_REPORT](P5_SEAL_FIX_REPORT.md)。S1 从 NativeBackend._query → _rows/_identity/inspect/_listeners 阅读：显式成功 envelope、查询异常、成功空集和身份不确定分别处理；再看 lifecycle_permit_child._rows 对同一协议的复用。
+
+S2 读 maintenance_policy 的 maintenance_operation、_logical_owner、cli_gate、maintenance_action 和 authorize_maintenance_command：比较 CLI、导入调用、异步 Task、独立审批及内部 helper 的权限来源。对照 scripts/p5-live-state-check.py 的当前租户筛选、退役迁移/恢复入口，理解为什么不能恢复旧 finally 行为。
+
+S3 读 p5-live-preflight.py 的 credential_name、prepare、require_service_only_file、trusted_command、run，再读 configure-deepseek-coder.py 的解析前与写出前检查。Issuer 是独立权限，不能仅依赖模型引用分类器；维护子进程白名单与 Coder 服务合法原生继承是不同调用链。
+
+最后读新增 test_seal_s1_queries、test_seal_s1_fixture_query、test_seal_s2_maintenance、seal_s2_probe、test_seal_s3_issuer。测试使用假凭据和独立状态；最新完整数字见修复报告，历史450项不能当成本轮成绩。旧备份/升降级脚本只用于阅读历史实现，默认退役，不应照旧执行。
