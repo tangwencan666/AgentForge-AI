@@ -9,6 +9,7 @@ AgentForge AI 是基于 FastAPI、React、PostgreSQL、Redis 和 LangGraph 的�
 ## 文档入口
 
 - [核心 GitHub Actions CI 范围](docs/CORE_CI.md)
+- [隔离 Mock 工作流 CI](docs/MOCK_WORKFLOW_CI.md)
 - [本地启动指南](docs/GETTING_STARTED.md)
 - [源码学习路径](docs/LEARNING_PATH.md)
 - [P1 完成报告](docs/P1_REPORT.md)
