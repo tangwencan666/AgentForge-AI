@@ -8,6 +8,7 @@ AgentForge AI 是基于 FastAPI、React、PostgreSQL、Redis 和 LangGraph 的�
 
 ## 文档入口
 
+- [核心 GitHub Actions CI 范围](docs/CORE_CI.md)
 - [本地启动指南](docs/GETTING_STARTED.md)
 - [源码学习路径](docs/LEARNING_PATH.md)
 - [P1 完成报告](docs/P1_REPORT.md)
@@ -57,4 +58,4 @@ Docker 共享内核，存在逃逸及宿主机风险，不能视为绝对安全�
 - 上传 `backend/`、`frontend/`、`sandbox-image/`、`scripts/`、`tests/`、`docs/`、配置样例、依赖清单及锁文件、Compose/Docker 构建配置和迁移源码。
 - 排除真实 `.env`、密钥、数据库与备份、运行数据、日志、依赖和构建产物，以及 `work/`、`NexusOps/` 和 Project-Sentinel 副本。`.env.example` 只包含占位配置。
 - 本次检查覆盖基线全部可达历史文件与提交，进行本地已知秘密及常见编码比对、常见凭据格式检查和排除路径检查；未发现真实秘密进入待上传历史。测试中的虚构 URL 凭据用于脱敏断言。
-- 仓库未配置 GitHub Actions 工作流。本次不新增自动化部署，也不重跑应用测试；历史文档中的测试数字均属于原日期的记录，不是本次上传的测试结果。
+- 首次源码上传时未配置 GitHub Actions，也未重跑应用测试。后续核心 CI 的环境、明确测试范围和未覆盖项见 [CORE_CI](docs/CORE_CI.md)；CI 不包含自动部署，不能解除运行验收阻塞。历史文档中的测试数字均属于原日期的记录。
