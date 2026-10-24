@@ -1,0 +1,18 @@
+FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+ARG BUILD_REVISION
+LABEL org.opencontainers.image.source="https://github.com/tangwencan666/AgentForge-AI" \
+      org.opencontainers.image.revision="${BUILD_REVISION}" \
+      ai.agentforge.demo="vm-mock"
+WORKDIR /srv/backend
+COPY backend/requirements.lock backend/pyproject.toml ./
+RUN pip install --no-cache-dir -r requirements.lock && pip check
+COPY backend/app ./app
+RUN pip install --no-cache-dir --no-deps . && useradd --uid 10001 --create-home agentforge
+COPY backend/alembic.ini ./
+COPY backend/migrations ./migrations
+COPY deploy/vm-mock/runtime.py ./vm_mock_runtime.py
+COPY deploy/vm-mock/vm_mock_policy.py ./vm_mock_policy.py
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+USER 10001:10001
+ENTRYPOINT ["python", "vm_mock_runtime.py"]
+CMD ["api"]

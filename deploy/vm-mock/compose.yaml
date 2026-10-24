@@ -1,0 +1,168 @@
+name: agentforge-vm-mock
+
+# This file never builds or pulls images. Supply a new explicit --env-file.
+x-app-environment: &app-environment
+  VM_MOCK_INSTANCE_ID: ${VM_MOCK_INSTANCE_ID:?new demo UUID required}
+  VM_MOCK_APP_PASSWORD: ${VM_MOCK_APP_PASSWORD:?new 64-character hex secret required}
+  VM_MOCK_REDIS_PASSWORD: ${VM_MOCK_REDIS_PASSWORD:?new 64-character hex secret required}
+  VM_MOCK_ADMIN_TOKEN: ${VM_MOCK_ADMIN_TOKEN:?new 64-character hex token required}
+  AGENTFORGE_REAL_CALLS_ENABLED: "false"
+  AGENTFORGE_EXTERNAL_MODELS_BLOCKED: "1"
+  AGENTFORGE_SINGLE_USE_PERMITS_ENABLED: "false"
+  AGENTFORGE_REAL_WORKER_MODE: deny
+  AGENTFORGE_REAL_DAILY_BUDGET_USD: "0"
+  AGENTFORGE_REAL_TEST_BUDGET_USD: "0"
+  LANGCHAIN_TRACING_V2: "false"
+  LANGSMITH_TRACING: "false"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+x-labels: &labels
+  ai.agentforge.demo: vm-mock
+  ai.agentforge.instance: ${VM_MOCK_INSTANCE_ID:?new demo UUID required}
+  ai.agentforge.base-source: 662eb38d72f2bed243594deae54008042adf7e45
+
+x-common: &common
+  labels: *labels
+  pull_policy: never
+  restart: "no"
+  security_opt: ["no-new-privileges:true"]
+  pids_limit: 128
+  logging:
+    driver: json-file
+    options: {max-size: 5m, max-file: "3"}
+
+x-app: &app
+  <<: *common
+  image: ${VM_MOCK_BACKEND_IMAGE:?prebuilt immutable backend reference required}
+  user: "10001:10001"
+  read_only: true
+  tmpfs: ["/tmp:rw,nosuid,nodev,noexec,size=33554432,mode=1777"]
+  cap_drop: [ALL]
+  environment: *app-environment
+  networks: [data]
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+
+services:
+  postgres:
+    <<: *common
+    profiles: [data, migration, app]
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    container_name: agentforge-vm-mock-postgres
+    read_only: true
+    mem_limit: 384m
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: agentforge
+      POSTGRES_PASSWORD: ${VM_MOCK_POSTGRES_PASSWORD:?new bootstrap secret required}
+      VM_MOCK_APP_PASSWORD: ${VM_MOCK_APP_PASSWORD:?new app secret required}
+      VM_MOCK_INSTANCE_ID: ${VM_MOCK_INSTANCE_ID:?new demo UUID required}
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=30", "-c", "work_mem=2MB", "-c", "maintenance_work_mem=32MB", "-c", "max_parallel_workers=0"]
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=33554432,mode=1777
+      - /var/run/postgresql:rw,nosuid,nodev,noexec,size=8388608,mode=1777
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/10-vm-mock.sh:ro
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "agentforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    <<: *common
+    profiles: [data, migration, app]
+    image: redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    container_name: agentforge-vm-mock-redis
+    read_only: true
+    mem_limit: 96m
+    environment:
+      VM_MOCK_REDIS_PASSWORD: ${VM_MOCK_REDIS_PASSWORD:?new redis secret required}
+      REDISCLI_AUTH: ${VM_MOCK_REDIS_PASSWORD:?new redis secret required}
+    entrypoint: ["/bin/sh", "/vm-mock-redis.sh"]
+    volumes:
+      - redis_data:/data
+      - ./redis-start.sh:/vm-mock-redis.sh:ro
+    tmpfs: ["/tmp:rw,nosuid,nodev,noexec,size=8388608,mode=1777"]
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    <<: *app
+    profiles: [migration]
+    container_name: agentforge-vm-mock-migrate
+    command: [migrate]
+    mem_limit: 384m
+
+  backend:
+    <<: *app
+    profiles: [app]
+    container_name: agentforge-vm-mock-api
+    command: [api]
+    mem_limit: 384m
+    networks:
+      data: {}
+      web: {aliases: [backend]}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    <<: *app
+    profiles: [app]
+    container_name: agentforge-vm-mock-worker
+    command: [worker]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "python", "vm_mock_runtime.py", "health"]
+      interval: 10s
+      timeout: 8s
+      retries: 12
+
+  frontend:
+    <<: *common
+    profiles: [app]
+    image: ${VM_MOCK_FRONTEND_IMAGE:?prebuilt immutable frontend reference required}
+    container_name: agentforge-vm-mock-frontend
+    user: "101:101"
+    read_only: true
+    cap_drop: [ALL]
+    mem_limit: 64m
+    tmpfs: ["/tmp:rw,nosuid,nodev,noexec,size=16777216,mode=1777"]
+    # No host port publishing, including localhost publishing.
+    networks: [web]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+networks:
+  data:
+    name: agentforge-vm-mock-data
+    internal: true
+    labels: *labels
+  web:
+    name: agentforge-vm-mock-web
+    internal: true
+    labels: *labels
+
+volumes:
+  postgres_data:
+    name: agentforge-vm-mock-postgres-data
+    labels: *labels
+  redis_data:
+    name: agentforge-vm-mock-redis-data
+    labels: *labels
