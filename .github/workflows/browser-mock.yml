@@ -1,0 +1,86 @@
+name: Browser Mock workflow
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-mock-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-mock:
+    name: Chromium against real frontend, API and Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_DB: agentforge
+          POSTGRES_PASSWORD: ci-bootstrap-${{ github.run_id }}-${{ github.run_attempt }}
+        options: >-
+          --label ai.agentforge.ci=mock-workflow
+          --label ai.agentforge.ci.run=${{ github.run_id }}-${{ github.run_attempt }}
+          --label ai.agentforge.ci.role=postgres
+          --publish 127.0.0.1::5432
+          --tmpfs /var/lib/postgresql/data:rw,nosuid,size=536870912
+          --health-cmd "pg_isready -U postgres -d agentforge"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+      redis:
+        image: redis:7-bookworm
+        options: >-
+          --label ai.agentforge.ci=mock-workflow
+          --label ai.agentforge.ci.run=${{ github.run_id }}-${{ github.run_attempt }}
+          --label ai.agentforge.ci.role=redis
+          --publish 127.0.0.1::6379
+          --tmpfs /data:rw,nosuid,size=134217728
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install committed backend lock
+        run: python -m pip install --requirement backend/requirements.lock
+      - name: Check dependency consistency and isolation refusals
+        run: |
+          python -m pip check
+          python -m unittest discover -s tests/ci -p 'test_*.py' -v
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build real frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Install locked Playwright Chromium
+        working-directory: frontend
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Verify real Mock stack and four browser scenes
+        env:
+          AGENTFORGE_CI_POSTGRES_ID: ${{ job.services.postgres.id }}
+          AGENTFORGE_CI_REDIS_ID: ${{ job.services.redis.id }}
+        run: python scripts/ci_mock_workflow.py --browser
+      - name: Upload redacted browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-mock-evidence
+          path: work/browser-ci/
+          if-no-files-found: ignore
+          retention-days: 7

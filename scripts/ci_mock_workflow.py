@@ -15,7 +15,7 @@ from ci_mock_isolation import attest_services, hosted_context, install_guard, re
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / 'work/mock-ci'
 CONTEXT_NAMES = ('GITHUB_ACTIONS', 'RUNNER_ENVIRONMENT', 'RUNNER_OS', 'GITHUB_REPOSITORY',
-                 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_WORKSPACE',
+                 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_WORKSPACE', 'RUNNER_TEMP',
                  'AGENTFORGE_CI_POSTGRES_ID', 'AGENTFORGE_CI_REDIS_ID')
 
 
@@ -281,14 +281,21 @@ async def scenarios(config, processes, results):
     await database.close()
 
 
-async def main():
+async def main(browser=False):
+    global REPORT
     run, services = attest_services(ROOT, os.environ)
+    if browser:
+        REPORT = ROOT / 'work/browser-ci'
     REPORT.mkdir(parents=True, exist_ok=True)
     with socket.socket() as reserved:
         reserved.bind(('127.0.0.1', 0))
         api_port = reserved.getsockname()[1]
+        if browser:
+            with socket.socket() as frontend:
+                frontend.bind(('127.0.0.1', 0))
+                frontend_port = frontend.getsockname()[1]
     ports = [services[role]['port'] for role in ('postgres', 'redis')]
-    audit = install_guard(ROOT, ports + [api_port])
+    audit = install_guard(ROOT, ports + [api_port] + ([frontend_port] if browser else []))
     for event, args in [('socket.getaddrinfo', ('api.deepseek.com', 443, 0, 0, 0)),
                         ('socket.connect', (None, ('127.0.0.1', 18120))),
                         ('open', (str(ROOT / '.env'), 'r', 0))]:
@@ -301,6 +308,8 @@ async def main():
     settings = await provision(run, services, str(uuid4()))
     config = {'settings': settings, 'ports': ports, 'api_port': api_port, 'instance': settings['tenant_id'],
               'database_url': settings['database_url'], 'redis_url': settings['redis_url']}
+    if browser:
+        config['frontend_port'] = frontend_port
     results = {'isolation': {'status': 'PASS', 'run': run, 'services': services,
                               'network_and_dotenv_guard': True, 'api_port': api_port}}
     processes = []
@@ -312,6 +321,10 @@ async def main():
         results['temporary_database_migrated'] = {'status': 'PASS', 'target': 'head', 'new_database_only': True}
         processes.extend([start_child('api', config), start_child('worker', config)])
         await scenarios(config, processes[1:], results)
+        if browser:
+            from ci_browser_workflow import run_browser, verify_final_safety
+            results['browser'] = await run_browser(ROOT, REPORT, config, processes, runtime_environment())
+            results['browser_safety'] = await verify_final_safety(config)
         results['conclusion'] = 'PASS'
     except Exception as error:
         results['conclusion'] = 'FAIL'
@@ -337,8 +350,8 @@ if __name__ == '__main__':
         if len(sys.argv) == 3 and sys.argv[1] == '--child':
             child(sys.argv[2])
         else:
-            require(len(sys.argv) == 1, 'CI_ARGUMENTS_INVALID')
-            asyncio.run(main())
+            require(sys.argv[1:] in ([], ['--browser']), 'CI_ARGUMENTS_INVALID')
+            asyncio.run(main(browser=sys.argv[1:] == ['--browser']))
     except Exception as error:
         print('Mock CI refused/failed: ' + (str(error) if isinstance(error, (RuntimeError, AssertionError)) else type(error).__name__), flush=True)
         raise SystemExit(1) from None
