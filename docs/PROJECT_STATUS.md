@@ -1,5 +1,15 @@
 # AgentForge AI 项目状态
 
+## 2026-10-24 首次 GitHub 源码交付整理
+
+交付基线为原仓库 `main` 的 `a7fe926b3ea8ee9c097fbd9314d7ae8c296a898c`，已有 12 个本地提交，包含 G5 文档归档；下文“G5 未提交”等表述属于 2026-10-19 的历史记录。README 已更新为本次源码交付说明。
+
+本次在 ignored `work/github-upload-20261024/` 中使用独立 Git 副本，保留原有历史，仅补充交付说明和排除规则。检查基线全部可达历史、305 个跟踪文件、凭据泄漏和工作流；不复制 `.env`、运行数据、备份、日志、依赖或其他项目副本。原目录未提交的 `NexusOps/` 原样保留。
+
+**运行验收仍为 RUNTIME_BLOCKED，实际部署仍为 DEPLOYMENT_BLOCKED；VMware Mock 演示未通过验收，继续标为未验证。** 生命周期 `CONTROL_CHANNEL_UNVERIFIED`、Runner 隔离和真实 Sandbox 验收缺口未关闭，真实模型及计费验收未完成。本次未重新执行历史应用测试，不将历史数字记为新结果，未核验任何主运行服务的当前状态。
+
+本次源码上传不操作 `agentforge-p3-runner`，不启动或修改 VMware，不执行 Docker 写操作、数据库迁移或真实模型请求。仓库无 GitHub Actions 工作流，不新增自动部署。以下各节均保留原日期的事实、失败及限制，不代表本次重新验收。
+
 ## 2026-10-19 G5 文档归档修正：运行验收仍阻塞
 
 G1 `f9fdd3e`（42 文件）、G2 `c69ef53`（5 文件）、G3 `41d2257`（50 文件）已本地提交；G4 `e9ced78`（57 文件）已按 **Archive-only** 方式提交。G5 仍为精确 32 文档的修正与归档准备，未暂存或提交。Git 归档完成不代表 CI 全绿、运行安全验收通过或生产可部署；**RUNTIME_ACCEPTANCE：RUNTIME_BLOCKED**。

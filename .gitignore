@@ -14,3 +14,23 @@ playwright-report/
 *.log
 .coverage
 .DS_Store
+
+# Other projects and local runtime material never belong in this repository.
+/NexusOps/
+/Project-Sentinel/
+/backups/
+/data/
+/logs/
+/runtime/
+*.dump
+*.backup
+*.bak
+*.sql.gz
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.p12
+*.pfx
