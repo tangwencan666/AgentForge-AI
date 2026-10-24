@@ -3,19 +3,41 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 from ci_mock_isolation import audit_guard, hosted_context, inspect_service
+from ci_browser_workflow import redact_reports
 
 
 class IsolationRefusalTests(unittest.TestCase):
     def test_entrypoint_refuses_before_starting_an_event_loop_or_services(self):
         command = [sys.executable, str(Path(__file__).resolve().parents[2] / 'scripts/ci_mock_workflow.py')]
         environment = {name: os.environ[name] for name in ('PATH', 'SystemRoot', 'WINDIR') if name in os.environ}
-        result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=5)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('CI_HOSTED_LINUX_REQUIRED', result.stdout)
+        for arguments in ([], ['--browser']):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(command + arguments, env=environment, capture_output=True, text=True, timeout=5)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('CI_HOSTED_LINUX_REQUIRED', result.stdout)
+
+    def test_browser_text_evidence_removes_transient_credentials(self):
+        token = 'fixture-credential-never-used-for-authentication'
+        config = {'settings': {'admin_token': token},
+                  'database_url': 'postgresql+asyncpg://fixture:fixture-db-password@127.0.0.1:34567/agentforge',
+                  'redis_url': 'redis://:fixture-redis-password@127.0.0.1:34568/0'}
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory)
+            for name in ('playwright.log', 'browser.xml', 'error-context.md'):
+                (report / name).write_text(token + ' fixture-db-password fixture-redis-password', encoding='utf-8')
+            (report / 'screen.png').write_bytes(b'fixture-image-bytes')
+            redact_reports(report, config)
+            for name in ('playwright.log', 'browser.xml', 'error-context.md'):
+                content = (report / name).read_text(encoding='utf-8')
+                self.assertNotIn(token, content)
+                self.assertNotIn('fixture-db-password', content)
+                self.assertNotIn('fixture-redis-password', content)
+            self.assertEqual((report / 'screen.png').read_bytes(), b'fixture-image-bytes')
 
     def service(self):
         return {'Config': {'Labels': {'ai.agentforge.ci': 'mock-workflow', 'ai.agentforge.ci.run': '123-1',
