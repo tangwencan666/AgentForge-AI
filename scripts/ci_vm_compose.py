@@ -9,7 +9,7 @@ import secrets
 import subprocess
 import tempfile
 import time
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 from uuid import uuid4
 
@@ -113,6 +113,8 @@ def validate_config(config, lock):
     for name in ('backend', 'worker', 'migrate'):
         require(config['services'][name]['image'] == lock['artifacts']['backend']['image_id'], 'VM_CI_BACKEND_IMAGE')
     require(config['services']['frontend']['image'] == lock['artifacts']['frontend']['image_id'], 'VM_CI_FRONTEND_IMAGE')
+    require(all(config['services'][name]['image'] == lock['official_dependencies'][name]['image_id']
+                for name in ('postgres', 'redis')), 'VM_CI_OFFICIAL_DEPENDENCY_IMAGE')
 
 
 def scenarios(stack, origin, result):
@@ -272,6 +274,9 @@ def main():
                 row = stack.container(service)
                 require(not row['HostConfig'].get('PortBindings') and not row['HostConfig']['Privileged']
                         and row['HostConfig']['ReadonlyRootfs'] and row['State']['Health']['Status'] == 'healthy', 'VM_CI_CONTAINER_ISOLATION')
+                expected = (lock['official_dependencies'][service]['image_id'] if service in ('postgres', 'redis')
+                            else lock['artifacts']['frontend' if service == 'frontend' else 'backend']['image_id'])
+                require(row['Image'] == expected, 'VM_CI_RUNNING_IMAGE_ID_MISMATCH')
                 observed[service] = {'id': row['Id'], 'image_id': row['Image'], 'health': row['State']['Health']['Status'],
                                       'memory_limit': row['HostConfig']['Memory'], 'networks': list(row['NetworkSettings']['Networks'])}
             for name in ('data', 'web'):
@@ -282,6 +287,15 @@ def main():
             require(ipaddress.ip_address(address).is_private, 'VM_CI_FRONTEND_IP')
             result['isolation'] = {'instance': values['VM_MOCK_INSTANCE_ID'], 'containers': observed,
                                     'published_ports': 0, 'network_internal': True, 'generated_code_executed': False}
+            backend = stack.container('backend')
+            result['runtime_versions'] = json.loads(docker('exec', backend['Id'], 'python', '-c',
+                'import json,platform,sys; release=platform.freedesktop_os_release(); '
+                'print(json.dumps({"python":sys.version.split()[0],"libc":platform.libc_ver(),'
+                '"image_os":release.get("ID"),"image_os_version":release.get("VERSION_ID"),'
+                '"shared_host_kernel":platform.release(),"architecture":platform.machine()}))'))
+            result['runtime_versions']['postgres'] = stack.query('SELECT version()')
+            result['runtime_versions']['redis'] = docker('exec', stack.container('redis')['Id'], 'redis-server', '--version').strip()
+            result['runtime_versions']['frontend_alpine'] = docker('exec', frontend['Id'], 'cat', '/etc/alpine-release').strip()
             scenarios(stack, 'http://' + address + ':8080', details)
             result['conclusion'] = 'PASS'
         except Exception as error:

@@ -1,6 +1,6 @@
 **VMware 专用 Mock 部署准备**
 
-这是一套独立准备文件，不是已部署环境。基线为 main 提交 662eb38d72f2bed243594deae54008042adf7e45；当前主工作流、CI 隔离入口及旧 Compose 均未修改。应用镜像还没有构建，VM 兼容性、SSH 转发与真人浏览器操作尚未验证。禁止直接用旧 Compose 代替此入口。
+这是一套独立准备文件，不是已部署环境。基线为 main 提交 662eb38d72f2bed243594deae54008042adf7e45；当前主工作流、CI 隔离入口及旧 Compose 均未修改。新增托管构建和 Compose 验证的范围见 [VM 镜像验证](../../docs/VM_IMAGE_CI.md)。VM 兼容性、SSH 转发与真人浏览器操作尚未验证。禁止直接用旧 Compose 代替此入口。
 
 **文件与范围**
 
@@ -38,7 +38,8 @@ ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:15174:<verified-frontend-contain
 | VM_MOCK_REDIS_PASSWORD | 新生成 64 位十六进制，独立于其他凭据 |
 | VM_MOCK_ADMIN_TOKEN | 新生成 64 位十六进制，独立于其他凭据 |
 | VM_MOCK_POSTGRES_PASSWORD | 新生成的独立 PostgreSQL 引导凭据 |
-| VM_MOCK_BACKEND_IMAGE / VM_MOCK_FRONTEND_IMAGE | 清单中真实构建的完整 repo@sha256 引用 |
+| VM_MOCK_BACKEND_IMAGE / VM_MOCK_FRONTEND_IMAGE | resolved 清单中的不可变 image ID（sha256:config），也支持已验证的 repo@sha256 |
+| VM_MOCK_POSTGRES_IMAGE / VM_MOCK_REDIS_IMAGE | 离线导入后使用 resolved 清单中官方镜像的 image ID；省略时使用 Compose 已固定的官方 registry digest |
 
 入口在导入应用 Settings 之前拒绝继承的配置文件定位、数据库 URL、模型密钥和其他服务凭据；允许的策略环境必须与关闭值严格一致。然后仅用上述新输入构造固定服务别名的连接地址，使用 Settings(_env_file=None)，保留全部现有 Settings 校验。真实调用/Permit 关闭、真实 Worker 为 deny、真实日预算及测试预算为 0；Mock token 限额 1000000、模拟预算 10（均为有效正数）。真实模型密钥、Sandbox 令牌和镜像 ID 均不配置，不能以空字符串代替 None。
 
@@ -48,11 +49,11 @@ PostgreSQL 首次初始化在新 PGDATA 中建立无超级权限的应用角色�
 
 **镜像与资源限制**
 
-images.lock.json 的应用引用和构建提交当前为 null，状态为 NOT_BUILT；这是明确的阻塞，不能填假 digest 使检查通过。基础镜像引用沿用基线已提交的 PostgreSQL 17、Redis 7.4、Python 3.13、Node 24 和 Nginx digest；这些字符串已固定，但没有在本轮验证 registry 可用性或运行兼容性。既有 Mock CI 使用的 PostgreSQL 16/Python 3.12 成功不能替代这些容器镜像的验证。
+images.lock.json 是未构建模板，应用引用和构建提交为 null，状态为 NOT_BUILT，不能填假 digest 使检查通过。托管构建成功后，实际身份写入对应 Actions artifact 的 images.resolved.json；必须使用与构建提交及 run URL 匹配的产物。基础镜像沿用基线已提交的 PostgreSQL 17、Redis 7.4、Python 3.13、Node 24 和 Nginx digest。既有 Mock CI 使用的 PostgreSQL 16/Python 3.12 成功不能替代这些容器镜像的验证。
 
-构建必须在现代独立 Linux 完成，不使用 Windows Docker Desktop 或这台 1 vCPU VM 编译。构建参数 BUILD_REVISION 必须是真实准备文件提交 SHA；完成后记录真实 repo digest、构建提交和构建运行链接，检查 OCI 来源标签。此准备没有增加 Actions 工作流、上传镜像或自动部署。
+构建必须在现代独立 Linux 完成，不使用 Windows Docker Desktop 或这台 1 vCPU VM 编译。构建参数 BUILD_REVISION 必须是真实准备文件提交 SHA；完成后记录真实 image ID、config digest、OCI manifest digest、构建提交和运行链接，检查 OCI 来源标签。本 PR 的独立 Actions 入口只构建/导出镜像并在临时托管环境验证，不发布 registry 或自动部署到 VM。
 
-Compose 设置 pull_policy=never。镜像导入/拉取需后续单独授权；不存在正确本地镜像时应失败，不能自动改用 latest。只读 inspect_target.py --images 在清单未构建时立即拒绝；清单解决后核对平台、RepoDigest 及应用 OCI 标签。这仍不代表目标内核运行兼容性。
+Compose 设置 pull_policy=never。VM 镜像导入/拉取需后续单独授权；不存在正确本地镜像时应失败，不能自动改用 latest。只读 inspect_target.py --images 在模板未构建时立即拒绝；可显式提供 --manifest /path/to/images.resolved.json。清单解决后核对平台、image ID/config digest 或 RepoDigest，及应用 OCI 标签。本地 build/save/load 没有 RepoDigest 时不会伪造一个，也不把 tag 当作身份。这仍不代表目标内核运行兼容性。
 
 已核对的唯一目标 Engine ID 为 f270beef-fc00-4691-8d57-a6643ad6f7cd。目标检查在 Windows 上会在 Docker 查询前拒绝；Linux 上显式使用本地 /run/docker.sock。五个旧容器必须仍为 exited/no，两个旧卷必须仍在，同名演示资源必须不存在。当前 Engine 汇总 Running 计数异常，检查依据逐容器真实状态，不使用该汇总计数替代运行状态。目标变化时停止并更新盘点，不修改旧资源。
 
@@ -73,6 +74,6 @@ python deploy/vm-mock/validate_files.py
 
 **下一阶段仍需明确授权**
 
-先审查这些文件及离线结果，再在独立 Linux 构建镜像并填入真实清单。之后单独授权 VM 的镜像导入及受限、network=none 的一次性版本/依赖探测容器；不运行应用工作流、生成代码或 Sandbox。兼容性通过后，才另外授权新目录/凭据、新数据容器和卷、专属数据库迁移、API/Worker/前端启动及 SSH 转发。
+托管构建/验证属于本 PR 范围。之后仍需单独授权 VM 的镜像导入及受限、network=none 的一次性版本/依赖探测容器；不运行应用工作流、生成代码或 Sandbox。兼容性通过后，才另外授权新目录/凭据、新数据容器和卷、专属数据库迁移、API/Worker/前端启动及 SSH 转发。
 
 本次没有向 VM 传文件、创建凭据、导入镜像、创建容器/网络/卷、迁移或部署。Windows agentforge-p3-runner 和原项目 .env 均不接触。任何静态检查通过都不能改写为 VMware 或真人手动演示验收通过。

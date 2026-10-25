@@ -312,6 +312,17 @@ class TargetTests(unittest.TestCase):
 
 
 class HostedTests(unittest.TestCase):
+    def test_host_attestation_refuses_vm_and_windows_engine_before_other_calls(self):
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import ci_vm_common
+        for identity in ci_vm_common.FORBIDDEN_ENGINES:
+            with patch.object(ci_vm_common, 'hosted_context', return_value='1-1'), \
+                 patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'pull_request'}), \
+                 patch.object(ci_vm_common, 'docker', return_value=json.dumps({'ID': identity})) as call:
+                with self.assertRaisesRegex(RuntimeError, 'ENGINE_MISMATCH'):
+                    ci_vm_common.attest()
+                self.assertEqual(call.call_count, 1)
+
     def test_new_entrypoints_refuse_local_before_docker(self):
         for name in ('ci_vm_images.py', 'ci_vm_compose.py'):
             with self.subTest(name=name):
