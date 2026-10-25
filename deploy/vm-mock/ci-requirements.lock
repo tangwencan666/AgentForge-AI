@@ -1,0 +1,3 @@
+# Hosted preparation tests only; application image dependencies stay unchanged.
+-r ../../backend/requirements.lock
+PyYAML==6.0.3

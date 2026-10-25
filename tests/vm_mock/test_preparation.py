@@ -293,6 +293,60 @@ class TargetTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "IMMUTABLE"):
             preflight.validate_image_lock(lock)
 
+    def test_offline_image_ids_match_config_and_do_not_require_registry_digest(self):
+        lock = json.loads((DEMO / "images.lock.json").read_text())
+        lock["build_status"] = "BUILT"
+        identity = "sha256:" + "a" * 64
+        for name in ("backend", "frontend"):
+            lock["artifacts"][name].update(reference=identity, config_digest=identity,
+                                           image_id=identity, build_revision="b" * 40)
+        lock['official_dependencies'] = {name: {'image_id': identity} for name in ('postgres', 'redis')}
+        def inspect(*args):
+            return json.dumps({"id": identity, "digests": [], "architecture": "amd64", "os": "linux",
+                "labels": {"ai.agentforge.demo": "vm-mock", "org.opencontainers.image.revision": "b" * 40,
+                           "org.opencontainers.image.source": "https://github.com/tangwencan666/AgentForge-AI"}})
+        preflight.images(lock, inspect)
+        lock['artifacts']['backend']['config_digest'] = 'sha256:' + 'c' * 64
+        with self.assertRaisesRegex(RuntimeError, 'CONFIG_LOCK'):
+            preflight.validate_image_lock(lock)
+
+
+class HostedTests(unittest.TestCase):
+    def test_new_entrypoints_refuse_local_before_docker(self):
+        for name in ('ci_vm_images.py', 'ci_vm_compose.py'):
+            with self.subTest(name=name):
+                result = subprocess.run([sys.executable, str(ROOT / 'scripts' / name)],
+                    env={'SystemRoot': os.environ.get('SystemRoot', ''), 'PATH': os.environ.get('PATH', '')},
+                    capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('CI_HOSTED_LINUX_REQUIRED', result.stdout)
+
+    def test_oci_identity_verifies_manifest_and_config_bytes(self):
+        import io
+        import tarfile
+        import tempfile
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        from ci_vm_images import oci_identity
+        config = b'{"architecture":"amd64","os":"linux"}'
+        config_digest = hashlib.sha256(config).hexdigest()
+        manifest = json.dumps({'config': {'digest': 'sha256:' + config_digest}}).encode()
+        manifest_digest = hashlib.sha256(manifest).hexdigest()
+        index = json.dumps({'manifests': [{'digest': 'sha256:' + manifest_digest}]}).encode()
+        for damaged in (False, True):
+            with tempfile.TemporaryDirectory() as directory:
+                target = Path(directory) / 'image.tar'
+                with tarfile.open(target, 'w') as archive:
+                    for name, content in [('index.json', index), ('blobs/sha256/' + manifest_digest, manifest),
+                                          ('blobs/sha256/' + config_digest, b'bad' if damaged else config)]:
+                        entry = tarfile.TarInfo(name)
+                        entry.size = len(content)
+                        archive.addfile(entry, io.BytesIO(content))
+                if damaged:
+                    with self.assertRaisesRegex(RuntimeError, 'CONFIG_DIGEST'):
+                        oci_identity(target)
+                else:
+                    self.assertEqual(oci_identity(target), ('sha256:' + manifest_digest, 'sha256:' + config_digest))
+
 
 class ComposeTests(unittest.TestCase):
     def test_no_published_ports_host_network_external_data_or_runner(self):

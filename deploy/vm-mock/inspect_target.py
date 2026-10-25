@@ -40,8 +40,11 @@ def validate_image_lock(lock):
     for name in ("backend", "frontend"):
         artifact = lock["artifacts"][name]
         require(isinstance(artifact.get("reference"), STRING_TYPES)
-                and re.match(r"^[a-z0-9./:_-]+@sha256:[a-f0-9]{64}$", artifact["reference"]),
+                and re.match(r"^(?:[a-z0-9./:_-]+@)?sha256:[a-f0-9]{64}$", artifact["reference"]),
                 "VM_IMMUTABLE_IMAGE_REFERENCE_REQUIRED")
+        if artifact["reference"].startswith("sha256:"):
+            require(artifact.get("config_digest") == artifact["reference"]
+                    and artifact.get("image_id") == artifact["reference"], "VM_IMAGE_CONFIG_LOCK_MISMATCH")
         require(isinstance(artifact.get("build_revision"), STRING_TYPES)
                 and re.match(r"^[a-f0-9]{40}$", artifact["build_revision"]),
                 "VM_BUILD_REVISION_REQUIRED")
@@ -77,7 +80,9 @@ def inventory(call=docker):
 
 def images(lock, call=docker):
     validate_image_lock(lock)
-    references = {name: lock["bases"][name] for name in ("postgres", "redis")}
+    dependencies = lock.get("official_dependencies", {})
+    references = {name: dependencies.get(name, {}).get("image_id", lock["bases"][name])
+                  for name in ("postgres", "redis")}
     references.update({name: lock["artifacts"][name]["reference"]
                        for name in ("backend", "frontend")})
     for name, reference in references.items():
@@ -88,10 +93,13 @@ def images(lock, call=docker):
             '"labels":{{json .Config.Labels}}}'))
         require(row["architecture"] == "amd64" and row["os"] == "linux",
                 "VM_IMAGE_PLATFORM_MISMATCH")
-        repository, digest = reference.split("@")
-        prefix, separator, leaf = repository.rpartition("/")
-        canonical = (prefix + separator if separator else "") + leaf.split(":")[0] + "@" + digest
-        require(canonical in (row["digests"] or []), "VM_IMAGE_DIGEST_MISMATCH")
+        if reference.startswith("sha256:"):
+            require(row["id"] == reference, "VM_IMAGE_CONFIG_LOCK_MISMATCH")
+        else:
+            repository, digest = reference.split("@")
+            prefix, separator, leaf = repository.rpartition("/")
+            canonical = (prefix + separator if separator else "") + leaf.split(":")[0] + "@" + digest
+            require(canonical in (row["digests"] or []), "VM_IMAGE_DIGEST_MISMATCH")
         if name in ("backend", "frontend"):
             labels = row["labels"] or {}
             require(labels.get("ai.agentforge.demo") == "vm-mock"
@@ -104,14 +112,17 @@ def images(lock, call=docker):
 
 def main():
     require(sys.platform in ("linux", "linux2"), "VM_LINUX_HOST_REQUIRED")
-    require(sys.argv[1:] in ([], ["--images"]), "VM_PREFLIGHT_ARGUMENTS")
-    with open(os.path.join(os.path.dirname(__file__), "images.lock.json")) as file:
+    arguments = sys.argv[1:]
+    require(arguments in ([], ["--images"]) or len(arguments) == 3
+            and arguments[:2] == ["--images", "--manifest"], "VM_PREFLIGHT_ARGUMENTS")
+    manifest = arguments[2] if len(arguments) == 3 else os.path.join(os.path.dirname(__file__), "images.lock.json")
+    with open(manifest) as file:
         lock = json.load(file)
-    if sys.argv[1:] == ["--images"]:
+    if arguments:
         # An unresolved manifest refuses before any Docker query.
         validate_image_lock(lock)
     result = inventory()
-    if sys.argv[1:] == ["--images"]:
+    if arguments:
         images(lock)
         result["images"] = "PRESENT_AND_LOCKED_NOT_RUNTIME_TESTED"
     print(json.dumps(result, sort_keys=True))

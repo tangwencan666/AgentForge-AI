@@ -1,0 +1,63 @@
+name: VM Mock images and Compose
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vm-mock-images-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  images-and-compose:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    name: Build amd64 images and verify dedicated Mock Compose
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.lock
+            deploy/vm-mock/ci-requirements.lock
+      - name: Install committed backend lock and test preparation guards
+        run: |
+          python -m pip install --requirement deploy/vm-mock/ci-requirements.lock
+          python -m pip check
+          python -m unittest discover -s tests/vm_mock -v
+          sh -n deploy/vm-mock/postgres-init.sh
+          sh -n deploy/vm-mock/redis-start.sh
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        id: buildx
+      - name: Build immutable images and export approved offline archive
+        env:
+          CI_VM_BUILDER: ${{ steps.buildx.outputs.name }}
+        run: python scripts/ci_vm_images.py
+      - name: Verify real dedicated Compose stack
+        run: python scripts/ci_vm_compose.py
+      - name: Upload non-secret image identities and service evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vm-mock-evidence
+          path: work/vm-image-ci/evidence/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload images only archive
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vm-mock-offline-images
+          path: work/vm-image-ci/archives/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
