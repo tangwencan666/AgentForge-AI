@@ -6,6 +6,20 @@ AgentForge AI 是基于 FastAPI、React、PostgreSQL、Redis 和 LangGraph 的�
 
 **当前交付状态：源码归档；运行验收仍为 `RUNTIME_BLOCKED`，实际部署仍为 `DEPLOYMENT_BLOCKED`。** 已实现不等于已通过当前环境验收。历史 P3/P4、离线与隔离环境测试记录保留在文档中，后续生命周期和 Runner 隔离阻塞仍未关闭。**VMware Mock 演示尚未通过验收，继续标为未验证。**
 
+## 项目用途与阅读方式
+
+面向需要理解多 Agent 协作、受控工具执行和审批边界的开发者。典型流程是提交任务目标，由 Planner 形成计划，再由 Coder、Researcher、Reviewer 按工作流协作；具体工具调用仍受服务端权限、预算和独立审批约束。
+
+源码主链路：React 页面 → FastAPI API → PostgreSQL 持久任务 / Redis 协调 → LangGraph 与 Worker → 模型适配器 / Tool Gateway。代码执行另经独立 Runner 和受限容器，不在宿主机回退执行。
+
+| 阅读层次 | 当前范围 |
+| --- | --- |
+| 源码实现 | 四角色协作、任务状态、预算、审批、取消、SSE、模型适配、MCP 和 Skills 等源码入口 |
+| 可复现验证入口 | 下方核心 CI、隔离 Mock 和自动浏览器 Mock 文档；实际结果与范围以对应提交的 Actions 记录为准 |
+| 尚未完成验收 | 真实外部模型与计费、真实 Sandbox、生命周期阻塞关闭、VMware Mock 演示和实际部署 |
+
+首次阅读可先看 [学习路径](docs/LEARNING_PATH.md) 与 [Multi-Agent 流程](docs/MULTI_AGENT.md)，再查看 [当前状态](docs/PROJECT_STATUS.md)。本仓库为私有源码归档，现有启动文档含历史环境记录；历史通过数与历史操作授权不代表当前环境已经可用。
+
 ## 文档入口
 
 - [核心 GitHub Actions CI 范围](docs/CORE_CI.md)
