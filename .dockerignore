@@ -1,0 +1,21 @@
+# Dedicated root build context. Include only the two app trees and VM entrypoint.
+*
+!backend/
+!backend/**
+!frontend/
+!frontend/**
+!deploy/
+!deploy/vm-mock/
+!deploy/vm-mock/runtime.py
+!deploy/vm-mock/vm_mock_policy.py
+**/.env
+**/.env.*
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.log
+**/dist
+**/work
+**/test-results
+**/playwright-report
