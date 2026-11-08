@@ -18,7 +18,7 @@ AgentForge AI 是基于 FastAPI、React、PostgreSQL、Redis 和 LangGraph 的�
 | 可复现验证入口 | 下方核心 CI、隔离 Mock 和自动浏览器 Mock 文档；实际结果与范围以对应提交的 Actions 记录为准 |
 | 尚未完成验收 | 真实外部模型与计费、真实 Sandbox、生命周期阻塞关闭、VMware Mock 演示和实际部署 |
 
-首次阅读可先看 [学习路径](docs/LEARNING_PATH.md) 与 [Multi-Agent 流程](docs/MULTI_AGENT.md)，再查看 [当前状态](docs/PROJECT_STATUS.md)。本仓库为私有源码归档，现有启动文档含历史环境记录；历史通过数与历史操作授权不代表当前环境已经可用。
+首次阅读可先看 [学习路径](docs/LEARNING_PATH.md) 与 [Multi-Agent 流程](docs/MULTI_AGENT.md)，再查看 [当前状态](docs/PROJECT_STATUS.md)。本仓库为公开源码归档，现有启动文档含历史环境记录；历史通过数与历史操作授权不代表当前环境已经可用。
 
 ## 文档入口
 
